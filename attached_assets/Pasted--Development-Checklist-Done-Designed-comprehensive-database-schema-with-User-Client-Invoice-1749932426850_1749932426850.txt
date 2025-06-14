@@ -1,0 +1,64 @@
+# Development Checklist
+
+## Done
+- Designed comprehensive database schema with User, Client, Invoice, InvoiceItem, and SystemConfig models
+- Implemented admin authentication system with role-based access control
+- Built complete API layer with client management, invoice creation, and dashboard analytics
+- Created responsive multi-page UI with dashboard, invoices, clients, and admin sections
+- Developed data seeding functionality with sample clients, invoices, and system configurations
+- Implemented invoice creation workflow with dynamic item management and automatic calculations
+- Built client management system with CRUD operations and relationship tracking
+- Created dashboard with financial statistics and recent activity overview
+- Established proper error handling and loading states throughout the application
+- Implemented mobile-responsive navigation with collapsible sidebar
+- Fixed TypeScript compilation errors in frontend and backend code
+- Added unique constraint to Client email field in Prisma schema
+- Successfully resolved seeding function database operation errors
+- Corrected Framer Motion animation type compatibility issues
+- Removed unused imports to clean up linting warnings
+- Successfully seeded initial data with sample clients, invoices, and system configurations
+- Phase 2: JSON file upload adapter for bulk invoice processing
+- Phase 2: Advanced financial calculation algorithms and tax management
+- Phase 2: Smart onboarding workflows and business logic optimization
+- Phase 3: Comprehensive seeding with exact pricing algorithm implementation
+- FILE 3 بخش ۱: پیکربندی تم "Obsidian & Gold" در theme.css با پالت رنگی کامل
+- FILE 3 بخش ۱: اضافه کردن فونت Vazirmatn برای پشتیبانی کامل از فارسی
+- FILE 3 بخش ۱: بهبود Layout اصلی با تم جدید و عناصر بصری Phoenix
+- FILE 3 بخش ۱: پیاده‌سازی حالت تاریک/روشن با تغییر پویا و انیمیشن
+- FILE 3 بخش ۱: ایجاد کلاس‌های CSS سفارشی برای عناصر Phoenix (gradient, glow, status)
+- FILE 3 بخش ۱: طراحی نوار کناری (Sidebar) یکپارچه با انیمیشن‌های Framer Motion
+- FILE 3 بخش ۱: ایجاد هویت بصری منسجم با لوگو و برندینگ Phoenix
+- FILE 3 بخش ۲: پیاده‌سازی کامپوننت کارت آمار (StatCard) با آیکون، ترند و انیمیشن
+- FILE 3 بخش ۲: ایجاد کامپوننت هدر صفحه (PageHeader) استاندارد و یکپارچه
+- FILE 3 بخش ۲: توسعه کامپوننت جدول داده (DataTable) با صفحه‌بندی، مرتب‌سازی و فیلتر
+- FILE 3 بخش ۲: ادغام کامپوننت‌های UI هسته در صفحات داشبورد، فاکتورها و نمایندگان
+- FILE 3 بخش ۲: بهبود تجربه کاربری با نمای کارت و جدول برای نمایندگان
+- FILE 3 بخش ۲: رفع خطاهای TypeScript و lint در کامپوننت‌های جدید
+- FILE 3 بخش ۳: پیاده‌سازی داشبورد کامل با KPI ها، آمار پیشرفته و نمودارها
+- FILE 3 بخش ۳: ایجاد صفحه لیست نمایندگان با نمای کارت و جدول و دکمه‌های عملیاتی
+- FILE 3 بخش ۳: پیاده‌سازی صفحه پروفایل نماینده با تب‌ها (Overview, Invoices, Payments)
+- FILE 3 بخش ۳: ایجاد فرم ویرایش نماینده با ۱۲ سطح تعرفه و اطلاعات تماس
+- FILE 3 بخش ۳: پیاده‌سازی فرم ثبت پرداخت جدید در تب پرداخت‌ها
+- FILE 3 بخش ۴: پیاده‌سازی فرم ثبت پرداخت و تعامل پویا با useMutation در UI نماینده
+- FILE 3 بخش ۴: پیاده‌سازی فرم تسویه پورسانت همکار و رفرش آنی UI
+- FILE 3 بخش ۴: پیاده‌سازی سناریو ثبت پرداخت برای نماینده با React Query
+- FILE 3 بخش ۴: پیاده‌سازی سناریو تسویه پورسانت همکار با invalidation strategy
+- FILE 3 بخش ۴: ایجاد فرم‌های پویا و تعاملات real-time با useMutation
+- FILE 3 بخش ۵: به‌روزرسانی چک‌لیست توسعه با آیتم‌های بخش ۵
+- FILE 3 بخش ۵: مستندات کامل تست‌های کامپوننت (Storybook) برای StatCard و DataTable
+- FILE 3 بخش ۵: طرح تست End-to-End (Cypress) برای سناریوی ثبت پرداخت
+- FILE 3 بخش ۵: پیکربندی‌های لازم Storybook و Cypress در مستندات
+- FILE 4 بخش ۱: پیاده‌سازی مدل InvoiceTemplate در schema.prisma برای ذخیره قالب‌های سفارشی
+- FILE 4 بخش ۱: ایجاد API endpoints برای مدیریت قالب فاکتور (دریافت، ذخیره، پیش‌نمایش)
+- FILE 4 بخش ۱: پیاده‌سازی قالب پیش‌فرض HTML با سینتکس Handlebars
+- FILE 4 بخش ۱: ایجاد سیستم آپلود لوگوی شرکت و ذخیره در فایل
+- FILE 4 بخش ۱: پیاد��‌سازی موتور پیش‌نمایش زنده با داده‌های نمونه
+- FILE 4 بخش ۱: پیاده‌سازی صفحه فرانت‌اند /admin/templates با ویرایشگر HTML
+- FILE 4 بخش ۱: ایجاد پنل ابزارها و راهنمای متغیرهای Handlebars
+- FILE 4 بخش ۱: پیاده‌سازی پنل پیش‌نمایش با iframe و دکمه‌های عملیاتی
+- FILE 4 بخش ۱: اضافه کردن لینک دسترسی سریع به قالب‌ها در پنل ادمین
+- Phase 4: Telegram integration for notifications and updates
+
+## Planned
+- Import data for 227 representatives
+- Phase 4: Advanced security features and production deployment preparation

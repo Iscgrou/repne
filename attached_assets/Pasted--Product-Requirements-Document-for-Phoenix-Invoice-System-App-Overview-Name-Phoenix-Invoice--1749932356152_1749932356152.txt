@@ -1,0 +1,558 @@
+# Product Requirements Document for Phoenix Invoice System
+
+## App Overview
+- Name: Phoenix Invoice System
+- Tagline: A comprehensive multi-stage invoicing and business management platform
+- Category: web_application
+- Visual Style: Refined Technical (e.g. Stripe)
+
+## Workflow
+
+Phase 1 (Foundation): Admin authentication → Database setup → Data seeding → Core structure validation. Phase 2 (Processing Engine): JSON file upload → Invoice generation → Financial calculations → Business logic implementation. Phase 3 (UI/UX): Admin dashboard → Forms and interactions → Dynamic user scenarios → Live testing. Phase 4 (Advanced): Security hardening → Template customization → Production deployment preparation.
+
+## Application Structure
+
+
+### Route: /
+
+Admin dashboard showing system overview, recent invoices, financial summaries, and quick access to core functions. Includes authentication gate and main navigation to all system modules.
+
+
+### Route: /invoices
+
+Invoice management interface with creation forms, JSON file upload processing, invoice listing with filters, and detailed invoice views with financial calculations and export options.
+
+
+### Route: /admin
+
+Advanced admin panel for system configuration, user management, data seeding controls, database maintenance tools, and development checklist tracking.
+
+
+## Core Features
+
+### Feature: Automated Invoice Generation from JSON
+
+**User Story**: As an admin, I want to upload a JSON file from the "Marzban" system, so that the system automatically generates invoices for all representatives, updates their balances, and calculates sales commissions.
+
+**API Endpoint**: `processMarzbanJsonFile` (RPC-style endpoint via apiClient)
+
+**Request Body**: 
+```typescript
+{
+  fileContent: string;     // JSON file content as string
+  fileName: string;        // Original filename for reference
+  autoCreateRepresentatives?: boolean;  // Auto-create missing representatives
+  applySmartPricing?: boolean;         // Apply intelligent pricing algorithms
+}
+```
+
+**Success Response (200)**: A JSON object of type ProcessingReport:
+```typescript
+{
+  success: boolean;
+  processedCount: number;
+  errorCount: number;
+  newRepresentativesCount: number;
+  skippedInactive: number;
+  invoices: Invoice[];
+  newRepresentatives: Representative[];
+  errors: { identifier: string; reason: string }[];
+  summary: {
+    totalRecords: number;
+    successfulInvoices: number;
+    autoCreatedRepresentatives: number;
+    skippedInactiveRepresentatives: number;
+    totalRevenue: number;
+    smartPricingApplied: boolean;
+    atomicTransactionUsed: boolean;
+  };
+  processingReport: ProcessingReport;
+}
+```
+
+**Error Responses**: 
+- 403 (Forbidden): User lacks admin privileges
+- 400 (Bad Request): Invalid JSON structure or missing required fields
+- 500 (Internal Server Error): Database transaction failure or processing error
+
+**Business Logic**:
+1. **Smart Onboarding**: Automatically creates missing representatives with default pricing tiers
+2. **12-Tier Pricing Algorithm**: Calculates costs based on service tiers (1-6 for limited plans, 7-12 for unlimited)
+3. **Commission Management**: Automatically calculates and records sales commissions
+4. **Atomic Transactions**: Ensures data consistency across all operations
+5. **Audit Trail**: Maintains complete source data snapshots for compliance
+
+**Data Flow**:
+1. JSON file validation using `MarzbanJsonAdapter.validateJsonStructure()`
+2. Data transformation via `MarzbanJsonAdapter.transform()`
+3. Invoice generation through `InvoiceGenerationService.generateInvoicesFromActivityData()`
+4. Balance updates and commission calculations
+5. Comprehensive reporting and error handling
+
+## UI Testing Strategy
+
+### Component Tests (Storybook)
+
+The following component tests ensure isolated testing of core UI components:
+
+#### StatCard Component Tests
+
+```typescript
+// StatCard.stories.tsx
+import type { Meta, StoryObj } from '@storybook/react';
+import { StatCard } from './StatCard';
+import { DollarSign, Users, TrendingUp, AlertCircle } from 'lucide-react';
+
+const meta: Meta<typeof StatCard> = {
+  title: 'Components/StatCard',
+  component: StatCard,
+  parameters: {
+    layout: 'centered',
+  },
+  tags: ['autodocs'],
+};
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+// Positive revenue card
+export const PositiveRevenue: Story = {
+  args: {
+    title: 'کل درآمد ماه',
+    value: '12,500,000 تومان',
+    icon: <DollarSign className="h-4 w-4" />,
+    description: 'درآمد ماه جاری',
+    trend: {
+      value: 15.2,
+      isPositive: true
+    }
+  },
+};
+
+// Negative balance card
+export const NegativeBalance: Story = {
+  args: {
+    title: 'موجودی معوق',
+    value: '-2,300,000 تومان',
+    icon: <AlertCircle className="h-4 w-4" />,
+    description: 'بدهی‌های معوق',
+    trend: {
+      value: 8.5,
+      isPositive: false
+    }
+  },
+};
+
+// Simple count card without trend
+export const SimpleCount: Story = {
+  args: {
+    title: 'تعداد نمایندگان',
+    value: 45,
+    icon: <Users className="h-4 w-4" />,
+    description: 'نمایندگان فعال'
+  },
+};
+
+// Large number formatting
+export const LargeNumber: Story = {
+  args: {
+    title: 'کل فروش',
+    value: 1250000000,
+    icon: <TrendingUp className="h-4 w-4" />,
+    description: 'فروش کل از ابتدای سال',
+    trend: {
+      value: 23.7,
+      isPositive: true
+    }
+  },
+};
+```
+
+#### DataTable Component Tests
+
+```typescript
+// DataTable.stories.tsx
+import type { Meta, StoryObj } from '@storybook/react';
+import { DataTable } from './DataTable';
+import { ColumnDef } from '@tanstack/react-table';
+import { Badge, Button } from '~/components/ui';
+import { Eye, Edit } from 'lucide-react';
+
+const meta: Meta<typeof DataTable> = {
+  title: 'Components/DataTable',
+  component: DataTable,
+  parameters: {
+    layout: 'fullscreen',
+  },
+};
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+// Sample data for testing
+const sampleInvoices = [
+  {
+    id: '1',
+    invoiceNumber: 'INV-000001',
+    representativeName: 'نماینده تهران',
+    amount: 1500000,
+    status: 'PAID',
+    dueDate: '2024-01-15'
+  },
+  {
+    id: '2', 
+    invoiceNumber: 'INV-000002',
+    representativeName: 'نماینده اصفهان',
+    amount: 2300000,
+    status: 'PENDING',
+    dueDate: '2024-01-20'
+  },
+  {
+    id: '3',
+    invoiceNumber: 'INV-000003', 
+    representativeName: 'نماینده شیراز',
+    amount: 890000,
+    status: 'OVERDUE',
+    dueDate: '2024-01-10'
+  }
+];
+
+const invoiceColumns: ColumnDef<any>[] = [
+  {
+    accessorKey: 'invoiceNumber',
+    header: 'شماره فاکتور',
+  },
+  {
+    accessorKey: 'representativeName',
+    header: 'نماینده',
+  },
+  {
+    accessorKey: 'amount',
+    header: 'مبلغ',
+    cell: ({ row }) => (
+      <div className="font-medium">
+        {row.getValue<number>('amount').toLocaleString()} تومان
+      </div>
+    ),
+  },
+  {
+    accessorKey: 'status',
+    header: 'وضعیت',
+    cell: ({ row }) => {
+      const status = row.getValue<string>('status');
+      return (
+        <Badge className={`invoice-status-${status.toLowerCase()}`}>
+          {status}
+        </Badge>
+      );
+    },
+  },
+  {
+    id: 'actions',
+    header: 'عملیات',
+    cell: () => (
+      <div className="flex space-x-2">
+        <Button variant="outline" size="sm">
+          <Eye className="h-4 w-4" />
+        </Button>
+        <Button variant="outline" size="sm">
+          <Edit className="h-4 w-4" />
+        </Button>
+      </div>
+    ),
+  },
+];
+
+// Table with data
+export const WithData: Story = {
+  args: {
+    columns: invoiceColumns,
+    data: sampleInvoices,
+    searchPlaceholder: 'جستجو در فاکتورها...'
+  },
+};
+
+// Empty table
+export const EmptyTable: Story = {
+  args: {
+    columns: invoiceColumns,
+    data: [],
+    searchPlaceholder: 'جستجو در فاکتورها...'
+  },
+};
+
+// Large dataset (for pagination testing)
+export const LargeDataset: Story = {
+  args: {
+    columns: invoiceColumns,
+    data: Array.from({ length: 50 }, (_, i) => ({
+      id: String(i + 1),
+      invoiceNumber: `INV-${String(i + 1).padStart(6, '0')}`,
+      representativeName: `نماینده ${i + 1}`,
+      amount: Math.floor(Math.random() * 5000000) + 500000,
+      status: ['PAID', 'PENDING', 'OVERDUE'][Math.floor(Math.random() * 3)],
+      dueDate: new Date(Date.now() + Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    })),
+    searchPlaceholder: 'جستجو در فاکتورها...'
+  },
+};
+```
+
+### End-to-End Tests (Cypress)
+
+#### Payment Registration E2E Test
+
+```typescript
+// cypress/e2e/payment-registration.cy.ts
+describe('Payment Registration Flow', () => {
+  beforeEach(() => {
+    // Setup: Login as admin
+    cy.visit('/');
+    cy.get('[data-testid="login-button"]').click();
+    
+    // Wait for authentication and redirect to dashboard
+    cy.url().should('include', '/');
+    cy.get('[data-testid="dashboard-title"]').should('be.visible');
+  });
+
+  it('should register a new payment and update representative balance', () => {
+    // Step 1: Navigate to representatives page
+    cy.get('[data-testid="nav-representatives"]').click();
+    cy.url().should('include', '/representatives');
+    
+    // Step 2: Find and click on a specific representative
+    cy.get('[data-testid="representative-card"]').first().click();
+    cy.url().should('match', /\/representatives\/[a-zA-Z0-9]+/);
+    
+    // Step 3: Get initial balance for comparison
+    cy.get('[data-testid="representative-balance"]')
+      .invoke('text')
+      .then((initialBalanceText) => {
+        const initialBalance = parseInt(initialBalanceText.replace(/[^\d-]/g, ''));
+        
+        // Step 4: Navigate to payments tab
+        cy.get('[data-testid="tab-payments"]').click();
+        
+        // Step 5: Open payment registration dialog
+        cy.get('[data-testid="add-payment-button"]').click();
+        cy.get('[data-testid="payment-dialog"]').should('be.visible');
+        
+        // Step 6: Fill payment form
+        const paymentAmount = 500000;
+        cy.get('[data-testid="payment-amount"]').type(paymentAmount.toString());
+        cy.get('[data-testid="payment-method"]').select('BANK_TRANSFER');
+        cy.get('[data-testid="payment-reference"]').type('REF-12345');
+        cy.get('[data-testid="payment-description"]').type('تست پرداخت E2E');
+        
+        // Step 7: Submit payment
+        cy.get('[data-testid="submit-payment"]').click();
+        
+        // Step 8: Verify success message
+        cy.get('[data-testid="toast-success"]')
+          .should('be.visible')
+          .and('contain', 'پرداخت با موفقیت ثبت شد');
+        
+        // Step 9: Verify dialog is closed
+        cy.get('[data-testid="payment-dialog"]').should('not.exist');
+        
+        // Step 10: Verify payment appears in table
+        cy.get('[data-testid="payments-table"]')
+          .should('contain', paymentAmount.toLocaleString())
+          .and('contain', 'BANK_TRANSFER')
+          .and('contain', 'REF-12345');
+        
+        // Step 11: Navigate back to overview tab
+        cy.get('[data-testid="tab-overview"]').click();
+        
+        // Step 12: Verify balance has been updated
+        cy.get('[data-testid="representative-balance"]')
+          .invoke('text')
+          .then((updatedBalanceText) => {
+            const updatedBalance = parseInt(updatedBalanceText.replace(/[^\d-]/g, ''));
+            const expectedBalance = initialBalance + paymentAmount;
+            
+            expect(updatedBalance).to.equal(expectedBalance);
+          });
+        
+        // Step 13: Verify statistics are updated
+        cy.get('[data-testid="stat-total-debt"]')
+          .should('be.visible');
+        
+        // Step 14: Verify payment reliability might have changed
+        cy.get('[data-testid="stat-payment-reliability"]')
+          .should('be.visible')
+          .invoke('text')
+          .should('match', /\d+%/);
+      });
+  });
+
+  it('should handle payment form validation', () => {
+    // Navigate to a representative's payment tab
+    cy.get('[data-testid="nav-representatives"]').click();
+    cy.get('[data-testid="representative-card"]').first().click();
+    cy.get('[data-testid="tab-payments"]').click();
+    
+    // Open payment dialog
+    cy.get('[data-testid="add-payment-button"]').click();
+    
+    // Try to submit without amount
+    cy.get('[data-testid="submit-payment"]').click();
+    
+    // Should show validation error or button should be disabled
+    cy.get('[data-testid="submit-payment"]').should('be.disabled');
+    
+    // Fill valid amount
+    cy.get('[data-testid="payment-amount"]').type('100000');
+    
+    // Now button should be enabled
+    cy.get('[data-testid="submit-payment"]').should('not.be.disabled');
+  });
+
+  it('should handle network errors gracefully', () => {
+    // Intercept payment API call and force it to fail
+    cy.intercept('POST', '/api/createPayment', {
+      statusCode: 500,
+      body: { error: 'Server Error' }
+    }).as('createPaymentError');
+    
+    // Navigate and attempt payment
+    cy.get('[data-testid="nav-representatives"]').click();
+    cy.get('[data-testid="representative-card"]').first().click();
+    cy.get('[data-testid="tab-payments"]').click();
+    cy.get('[data-testid="add-payment-button"]').click();
+    
+    // Fill and submit form
+    cy.get('[data-testid="payment-amount"]').type('100000');
+    cy.get('[data-testid="submit-payment"]').click();
+    
+    // Wait for API call
+    cy.wait('@createPaymentError');
+    
+    // Verify error message is shown
+    cy.get('[data-testid="toast-error"]')
+      .should('be.visible')
+      .and('contain', 'خطا در ثبت پرداخت');
+    
+    // Dialog should remain open for retry
+    cy.get('[data-testid="payment-dialog"]').should('be.visible');
+  });
+});
+```
+
+#### Test Data Setup
+
+```typescript
+// cypress/support/commands.ts
+Cypress.Commands.add('loginAsAdmin', () => {
+  cy.visit('/');
+  cy.window().then((win) => {
+    // Mock authentication for testing
+    win.localStorage.setItem('auth-token', 'mock-admin-token');
+  });
+  cy.reload();
+});
+
+Cypress.Commands.add('seedTestData', () => {
+  cy.request('POST', '/api/_seedInitialData');
+});
+
+// Add data-testid attributes to components for reliable testing
+declare global {
+  namespace Cypress {
+    interface Chainable {
+      loginAsAdmin(): Chainable<void>;
+      seedTestData(): Chainable<void>;
+    }
+  }
+}
+```
+
+### Testing Configuration
+
+#### Storybook Configuration
+
+```javascript
+// .storybook/main.js
+module.exports = {
+  stories: ['../src/**/*.stories.@(js|jsx|ts|tsx)'],
+  addons: [
+    '@storybook/addon-essentials',
+    '@storybook/addon-interactions',
+    '@storybook/addon-a11y'
+  ],
+  framework: {
+    name: '@storybook/react-vite',
+    options: {}
+  }
+};
+```
+
+#### Cypress Configuration
+
+```javascript
+// cypress.config.ts
+import { defineConfig } from 'cypress';
+
+export default defineConfig({
+  e2e: {
+    baseUrl: 'http://localhost:3000',
+    supportFile: 'cypress/support/e2e.ts',
+    specPattern: 'cypress/e2e/**/*.cy.{js,jsx,ts,tsx}',
+    viewportWidth: 1280,
+    viewportHeight: 720,
+    video: true,
+    screenshotOnRunFailure: true,
+    defaultCommandTimeout: 10000,
+    requestTimeout: 10000,
+    responseTimeout: 10000
+  },
+  component: {
+    devServer: {
+      framework: 'react',
+      bundler: 'vite'
+    }
+  }
+});
+```
+
+## طرح تست یکپارچگی End-to-End
+
+### سناریو: تأیید چرخه کامل مالی
+
+این تست یکپارچگی، صحت عملکرد کل جریان مالی سیستم را پس از اتصال ماژول‌های "نمایندگان" و "همکاران فروش" تضمین می‌کند.
+
+1.  **آماده‌سازی (Setup)**:
+    *   یک `SalesCollaborator` جدید با نام "همکار تست" و نرخ پورسانت ۱۰٪ ایجاد می‌شود.
+    *   یک `Representative` جدید با نام "نماینده تست" ایجاد شده و به "همکار تست" اختصاص داده می‌شود.
+
+2.  **تولید فاکتور (Invoice Generation)**:
+    *   یک فایل JSON پردازش می‌شود که منجر به صدور یک فاکتور به مبلغ ۱,۰۰۰,۰۰۰ تومان برای "نماینده تست" می‌گردد.
+
+3.  **راستی‌آزمایی (Verification)**:
+    *   **تأیید فاکتور**: بررسی می‌شود که فاکتور با مبلغ صحیح (۱,۰۰۰,۰۰۰ تومان) برای "نماینده تست" صادر شده است.
+    *   **تأیید موجودی نماینده**: بررسی می‌شود که موجودی "نماینده تست" به ۱,۰۰۰,۰۰۰- تومان کاهش یافته است.
+    *   **تأیید رکورد پورسانت**: بررسی می‌شود که یک رکورد پورسانت (`CommissionRecord`) به مبلغ ۱۰۰,۰۰۰ تومان (۱۰٪ از ۱,۰۰۰,۰۰۰) برای "همکار تست" ثبت شده است.
+    *   **تأیید موجودی همکار**: بررسی می‌شود که موجودی "همکار تست" به ۱۰۰,۰۰۰+ تومان افزایش یافته است.
+
+4.  **تسویه حساب (Payout)**:
+    *   یک تسویه حساب پورسانت (Payout) به مبلغ ۱۰۰,۰۰۰ تومان برای "همکار تست" ثبت می‌شود.
+
+5.  **راستی‌آزمایی نهایی (Final Verification)**:
+    *   **تأیید موجودی نهایی همکار**: بررسی می‌شود که موجودی "همکار تست" پس از تسویه، به ۰ تومان بازگشته است.
+```
+
+## Potentially Relevant Utility Functions
+
+### getAuth
+
+Potential usage: Handle admin authentication and session management for secure access to system functions
+
+Look at the documentation for this utility function and determine whether or not it is relevant to the app's requirements.
+
+----------------------------------
+
+### upload
+
+Potential usage: Process JSON file uploads for invoice data import and template management
+
+Look at the documentation for this utility function and determine whether or not it is relevant to the app's requirements.

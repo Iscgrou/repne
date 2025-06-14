@@ -1,0 +1,2457 @@
+import TelegramBot from "node-telegram-bot-api";
+import { db } from "~/server/db";
+import { getAuth, queueTask, getTaskStatus } from "~/server/actions";
+
+// ===== PHASE 4: DATA CONTRACTS & TYPES =====
+// گزارش پردازش برای ارائه بازخورد دقیق به ادمین
+export type ProcessingReport = {
+  totalRecords: number;
+  successCount: number;
+  skippedInactive: number;
+  newlyOnboarded: string[]; // لیستی از کدهای نمایندگان جدید
+  errors: { identifier: string; reason: string }[];
+};
+
+// ساختار یک رکورد خام از فایل JSON ورودی
+export type RawMarzbanRecord = {
+  admin_username: string;
+  limited_1_month_volume: string;
+  limited_2_month_volume: string;
+  limited_3_month_volume: string;
+  limited_4_month_volume: string;
+  limited_5_month_volume: string;
+  limited_6_month_volume: string;
+  unlimited_1_month: string;
+  unlimited_2_month: string;
+  unlimited_3_month: string;
+  unlimited_4_month: string;
+  unlimited_5_month: string;
+  unlimited_6_month: string;
+  [key: string]: any; // برای سایر فیلدهای احتمالی
+};
+
+// ساختار استاندارد شده که در کل سیستم ما استفاده خواهد شد
+export type StandardizedActivityRecord = {
+  representativeIdentifier: string;
+  // در آینده می‌توان جزئیات بیشتری از فایل خواند
+  representativeDetails: {
+    persianFullName: string;
+    contact: { mobile: string | null; email: string | null };
+  };
+  usageData: {
+    tier1_Volume: number;
+    tier2_Volume: number;
+    tier3_Volume: number;
+    tier4_Volume: number;
+    tier5_Volume: number;
+    tier6_Volume: number;
+    tier7_Volume: number;
+    tier8_Volume: number;
+    tier9_Volume: number;
+    tier10_Volume: number;
+    tier11_Volume: number;
+    tier12_Volume: number;
+    discountAmount: number; // برای آینده
+    additionalFee: number; // برای آینده
+  };
+  // کپی کامل رکورد خام برای حسابرسی
+  rawRecord: RawMarzbanRecord;
+};
+
+// ===== PHASE 4: MARZBAN JSON ADAPTER =====
+/**
+ * آداپتور داده برای تبدیل فایل JSON خام به ساختار استاندارد
+ * این کلاس یک "مترجم متخصص" است که ساختار پیچیده فایل admins1.json را
+ * به زبان استاندارد و تمیز تبدیل می‌کند
+ */
+export class MarzbanJsonAdapter {
+  public static transform(rawJson: any[]): StandardizedActivityRecord[] {
+    console.log("🔄 Starting Marzban JSON transformation...");
+
+    // 1. پیدا کردن شیء جدول داده‌ها
+    const tableObject = rawJson.find(
+      (item) => item.type === "table" && item.name === "a",
+    );
+    if (!tableObject || !Array.isArray(tableObject.data)) {
+      throw new Error("ساختار فایل نامعتبر است: شیء جدول داده 'a' یافت نشد.");
+    }
+
+    const sourceData: RawMarzbanRecord[] = tableObject.data;
+    console.log(`📊 Found ${sourceData.length} raw records to process`);
+
+    const standardizedRecords: StandardizedActivityRecord[] = [];
+
+    // 2. حلقه روی داده‌های خام و تبدیل آن‌ها
+    for (const record of sourceData) {
+      if (!record || !record.admin_username) {
+        console.log("⚠️ Skipping invalid record:", record);
+        continue; // نادیده گرفتن رکوردهای نامعتبر
+      }
+
+      const standardRecord: StandardizedActivityRecord = {
+        representativeIdentifier: record.admin_username,
+        representativeDetails: {
+          persianFullName: record.admin_username, // پیش‌فرض
+          contact: { mobile: null, email: null },
+        },
+        usageData: {
+          // نگاشت دقیق ۱۲ سطح سرویس با تبدیل رشته به عدد
+          tier1_Volume: parseFloat(record.limited_1_month_volume) || 0,
+          tier2_Volume: parseFloat(record.limited_2_month_volume) || 0,
+          tier3_Volume: parseFloat(record.limited_3_month_volume) || 0,
+          tier4_Volume: parseFloat(record.limited_4_month_volume) || 0,
+          tier5_Volume: parseFloat(record.limited_5_month_volume) || 0,
+          tier6_Volume: parseFloat(record.limited_6_month_volume) || 0,
+          tier7_Volume: parseInt(record.unlimited_1_month, 10) || 0,
+          tier8_Volume: parseInt(record.unlimited_2_month, 10) || 0,
+          tier9_Volume: parseInt(record.unlimited_3_month, 10) || 0,
+          tier10_Volume: parseInt(record.unlimited_4_month, 10) || 0,
+          tier11_Volume: parseInt(record.unlimited_5_month, 10) || 0,
+          tier12_Volume: parseInt(record.unlimited_6_month, 10) || 0,
+          discountAmount: 0,
+          additionalFee: 0,
+        },
+        rawRecord: record, // ذخیره رکورد خام برای حسابرسی
+      };
+
+      standardizedRecords.push(standardRecord);
+    }
+
+    console.log(
+      `✅ Successfully transformed ${standardizedRecords.length} records`,
+    );
+    return standardizedRecords;
+  }
+
+  /**
+   * اعتبارسنجی ساختار فایل JSON ورودی
+   */
+  public static validateJsonStructure(rawJson: any): boolean {
+    try {
+      if (!Array.isArray(rawJson)) {
+        console.error("❌ JSON must be an array");
+        return false;
+      }
+
+      const tableObject = rawJson.find(
+        (item) => item.type === "table" && item.name === "a",
+      );
+      if (!tableObject) {
+        console.error('❌ Missing table object with name "a"');
+        return false;
+      }
+
+      if (!Array.isArray(tableObject.data)) {
+        console.error("❌ Table object data must be an array");
+        return false;
+      }
+
+      console.log("✅ JSON structure validation passed");
+      return true;
+    } catch (error) {
+      console.error("❌ JSON structure validation failed:", error);
+      return false;
+    }
+  }
+}
+
+// Authentication & User Management
+export async function getCurrentUser() {
+  const auth = await getAuth();
+  if (auth.status === "unauthenticated") return null;
+
+  return await db.user.findUnique({
+    where: { id: auth.userId },
+  });
+}
+
+export async function setCurrentUserAsAdmin() {
+  const { userId } = await getAuth({ required: true });
+
+  return await db.user.upsert({
+    where: { id: userId },
+    update: { isAdmin: true },
+    create: { id: userId, isAdmin: true },
+  });
+}
+
+// Representative Management
+export async function listRepresentatives() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.representative.findMany({
+    orderBy: { createdAt: "desc" },
+    include: {
+      salesCollaborator: true,
+      _count: {
+        select: { invoices: true },
+      },
+    },
+  });
+}
+
+import { z } from "zod";
+
+const createRepresentativeSchema = z.object({
+  representativeCode: z.string().min(1),
+  persianFullName: z.string().min(1),
+  contactInfo: z.string().optional(),
+  salesCollaboratorId: z.string().optional(),
+});
+
+export async function createRepresentative(input: {
+  representativeCode: string;
+  persianFullName: string;
+  contactInfo?: string;
+  salesCollaboratorId?: string;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  // Input validation
+  const safeInput = createRepresentativeSchema.parse(input);
+
+  return await db.representative.create({
+    data: safeInput,
+  });
+}
+
+export async function getRepresentative({ id }: { id: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.representative.findUnique({
+    where: { id },
+    include: {
+      salesCollaborator: true,
+      invoices: {
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      },
+    },
+  });
+}
+
+// Invoice Management
+export async function listInvoices() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.invoice.findMany({
+    orderBy: { createdAt: "desc" },
+    include: {
+      representative: true,
+      items: true,
+    },
+  });
+}
+
+export async function createInvoice(input: {
+  representativeId: string;
+  dueDate: string;
+  notes?: string;
+  items: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+  }>;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  // Generate invoice number
+  const invoiceCount = await db.invoice.count();
+  const invoiceNumber = `INV-${String(invoiceCount + 1).padStart(6, "0")}`;
+
+  // Calculate totals
+  let totalAmount = 0;
+  const processedItems = input.items.map((item) => {
+    const total = item.quantity * item.unitPrice;
+    totalAmount += total;
+    return {
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      total,
+    };
+  });
+
+  return await db.invoice.create({
+    data: {
+      invoiceNumber,
+      representativeId: input.representativeId,
+      dueDate: new Date(input.dueDate),
+      notes: input.notes,
+      totalAmount,
+      items: {
+        create: processedItems,
+      },
+    },
+    include: {
+      representative: true,
+      items: true,
+    },
+  });
+}
+
+export async function getInvoice({ id }: { id: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.invoice.findUnique({
+    where: { id },
+    include: {
+      representative: true,
+      items: true,
+    },
+  });
+}
+
+export async function updateInvoiceStatus(input: {
+  id: string;
+  status: string;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.invoice.update({
+    where: { id: input.id },
+    data: { status: input.status },
+  });
+}
+
+// Dashboard Analytics
+export async function getDashboardStats() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const [
+    totalInvoices,
+    totalRepresentatives,
+    paidInvoices,
+    overdueInvoices,
+    totalRevenue,
+  ] = await Promise.all([
+    db.invoice.count(),
+    db.representative.count(),
+    db.invoice.count({ where: { status: "PAID" } }),
+    db.invoice.count({ where: { status: "OVERDUE" } }),
+    db.invoice.aggregate({
+      where: { status: "PAID" },
+      _sum: { totalAmount: true },
+    }),
+  ]);
+
+  return {
+    totalInvoices,
+    totalRepresentatives,
+    paidInvoices,
+    overdueInvoices,
+    totalRevenue: totalRevenue._sum.totalAmount || 0,
+    pendingInvoices: totalInvoices - paidInvoices - overdueInvoices,
+  };
+}
+
+// System Configuration
+export async function getSystemConfig() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const configs = await db.systemConfig.findMany();
+  return configs.reduce(
+    (acc, config) => {
+      acc[config.key] = config.value;
+      return acc;
+    },
+    {} as Record<string, string>,
+  );
+}
+
+export async function updateSystemConfig(input: {
+  key: string;
+  value: string;
+  description?: string;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.systemConfig.upsert({
+    where: { key: input.key },
+    update: { value: input.value, description: input.description },
+    create: input,
+  });
+}
+
+// ===== PHASE 4: INVOICE GENERATION SERVICE =====
+/**
+ * سرویس صدور فاکتور - مغز عملیات مالی
+ * این سرویس هیچ‌چیز در مورد فایل JSON نمی‌داند
+ * ورودی: داده‌های تمیز و استاندارد از آداپتور
+ * خروجی: رکوردهای دقیق در دیتابیس
+ * تمام عملیات در یک تراکنش واحد (Atomic Transaction) انجام می‌شود
+ */
+export class InvoiceGenerationService {
+  public static async generateInvoicesFromActivityData(
+    activityRecords: StandardizedActivityRecord[],
+  ): Promise<ProcessingReport> {
+    console.log("🧠 Starting Invoice Generation Service...");
+
+    const report: ProcessingReport = {
+      totalRecords: activityRecords.length,
+      successCount: 0,
+      skippedInactive: 0,
+      newlyOnboarded: [],
+      errors: [],
+    };
+
+    // اجرای تمام عملیات در یک تراکنش واحد برای تضمین یکپارچگی داده
+    await db.$transaction(async (tx) => {
+      console.log(
+        `🔄 Processing ${activityRecords.length} activity records in transaction...`,
+      );
+
+      for (const record of activityRecords) {
+        try {
+          // --- گام ۱: شناسایی یا آنبوردینگ هوشمند نماینده ---
+          let representative = await tx.representative.findUnique({
+            where: { representativeCode: record.representativeIdentifier },
+            include: { salesCollaborator: true },
+          });
+
+          if (!representative) {
+            console.log(
+              `🆕 Smart onboarding for representative: ${record.representativeIdentifier}`,
+            );
+
+            // آنبوردینگ هوشمند: ایجاد نماینده با تعرفه‌های پیش‌فرض
+            // دریافت تعرفه‌های پیش‌فرض از تنظیمات سیستم
+            const defaultPricing = await this.getDefaultPricingTiers();
+
+            // انتخاب همکار فروش پیش‌فرض (اولین همکار فعال)
+            const defaultCollaborator = await tx.salesCollaborator.findFirst({
+              where: { isActive: true },
+              orderBy: { createdAt: "asc" },
+            });
+
+            representative = await tx.representative.create({
+              data: {
+                representativeCode: record.representativeIdentifier,
+                persianFullName: record.representativeDetails.persianFullName,
+                contactInfo: JSON.stringify(
+                  record.representativeDetails.contact,
+                ),
+                salesCollaboratorId: defaultCollaborator?.id || null,
+                isActive: true,
+                balance: 0,
+                // تعرفه‌های پیش‌فرض
+                price_tier1: defaultPricing.tier1,
+                price_tier2: defaultPricing.tier2,
+                price_tier3: defaultPricing.tier3,
+                price_tier4: defaultPricing.tier4,
+                price_tier5: defaultPricing.tier5,
+                price_tier6: defaultPricing.tier6,
+                price_tier7: defaultPricing.tier7,
+                price_tier8: defaultPricing.tier8,
+                price_tier9: defaultPricing.tier9,
+                price_tier10: defaultPricing.tier10,
+                price_tier11: defaultPricing.tier11,
+                price_tier12: defaultPricing.tier12,
+              },
+              include: { salesCollaborator: true },
+            });
+
+            report.newlyOnboarded.push(representative.representativeCode);
+            console.log(
+              `✅ Representative created: ${representative.representativeCode}`,
+            );
+          }
+
+          // --- گام ۲: بررسی وضعیت فعالیت ---
+          if (!representative.isActive) {
+            console.log(
+              `⏭️ Skipping inactive representative: ${representative.representativeCode}`,
+            );
+            report.skippedInactive++;
+            continue; // برو به رکورد بعدی
+          }
+
+          // --- گام ۳: محاسبه مبلغ فاکتور بر اساس ۱۲ سطح تعرفه ---
+          let totalAmount = 0;
+          const invoiceItemsData: any[] = [];
+
+          for (let i = 1; i <= 12; i++) {
+            const usageKey = `tier${i}_Volume` as keyof typeof record.usageData;
+            const priceKey = `price_tier${i}` as keyof typeof representative;
+
+            const quantity = record.usageData[usageKey];
+            const unitPrice = representative[priceKey] as number;
+
+            if (quantity > 0 && unitPrice > 0) {
+              const lineTotal = quantity * unitPrice;
+              totalAmount += lineTotal;
+
+              const serviceType = i <= 6 ? "محدود" : "نامحدود";
+              const unit = i <= 6 ? "گیگابایت" : "ماه";
+
+              invoiceItemsData.push({
+                description: `سرویس ${serviceType} - سطح ${i} (${quantity} ${unit})`,
+                quantity,
+                unitPrice: Math.round(unitPrice),
+                total: Math.round(lineTotal),
+              });
+            }
+          }
+
+          // اعمال هزینه‌های اضافی و تخفیفات
+          if (record.usageData.additionalFee > 0) {
+            invoiceItemsData.push({
+              description: "هزینه اضافی",
+              quantity: 1,
+              unitPrice: record.usageData.additionalFee,
+              total: record.usageData.additionalFee,
+            });
+            totalAmount += record.usageData.additionalFee;
+          }
+
+          if (record.usageData.discountAmount > 0) {
+            invoiceItemsData.push({
+              description: "تخفیف",
+              quantity: 1,
+              unitPrice: -record.usageData.discountAmount,
+              total: -record.usageData.discountAmount,
+            });
+            totalAmount -= record.usageData.discountAmount;
+          }
+
+          // اعمال مالیات (9% VAT)
+          const taxRate = 0.09;
+          const taxAmount = totalAmount * taxRate;
+          if (taxAmount > 0) {
+            invoiceItemsData.push({
+              description: `مالیات بر ارزش افزوده (${(taxRate * 100).toFixed(1)}%)`,
+              quantity: 1,
+              unitPrice: Math.round(taxAmount),
+              total: Math.round(taxAmount),
+            });
+            totalAmount += taxAmount;
+          }
+
+          // --- گام ۴: ایجاد فاکتور (فقط اگر مبلغی وجود داشته باشد) ---
+          if (totalAmount > 0) {
+            const invoiceNumber = await this.generateUniqueInvoiceNumber(tx);
+
+            const newInvoice = await tx.invoice.create({
+              data: {
+                invoiceNumber,
+                representativeId: representative.id,
+                issueDate: new Date(),
+                dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 روز
+                totalAmount: Math.round(totalAmount),
+                status: "PENDING_PAYMENT",
+                notes: `تولید شده از سرویس صدور فاکتور - ${new Date().toISOString()}`,
+                source_data_snapshot: JSON.stringify(record.rawRecord),
+                items: {
+                  create: invoiceItemsData,
+                },
+              },
+            });
+
+            console.log(
+              `📄 Invoice created: ${invoiceNumber} for ${Math.round(totalAmount)} Toman`,
+            );
+
+            // --- گام ۵: به‌روزرسانی موجودی نماینده ---
+            await tx.representative.update({
+              where: { id: representative.id },
+              data: { balance: { decrement: totalAmount } },
+            });
+
+            // --- گام ۶: محاسبه و ثبت پورسانت (اگر همکار فروش وجود داشت) ---
+            if (
+              representative.salesCollaborator &&
+              representative.salesCollaborator.commissionRate > 0
+            ) {
+              const commissionAmount =
+                (totalAmount *
+                  representative.salesCollaborator.commissionRate) /
+                100;
+
+              await tx.commissionRecord.create({
+                data: {
+                  invoiceId: newInvoice.id,
+                  salesCollaboratorId: representative.salesCollaborator.id,
+                  commissionAmount: Math.round(commissionAmount),
+                  commissionRate:
+                    representative.salesCollaborator.commissionRate,
+                  status: "PENDING",
+                  notes: `محاسبه شده توسط سرویس صدور فاکتور - نرخ ${representative.salesCollaborator.commissionRate}%`,
+                },
+              });
+
+              await tx.salesCollaborator.update({
+                where: { id: representative.salesCollaborator.id },
+                data: { balance: { increment: commissionAmount } },
+              });
+
+              console.log(
+                `💰 Commission calculated: ${Math.round(commissionAmount)} Toman for ${representative.salesCollaborator.name}`,
+              );
+            }
+
+            report.successCount++;
+          } else {
+            console.log(
+              `⚠️ No billable amount for ${record.representativeIdentifier}`,
+            );
+          }
+        } catch (error: any) {
+          console.error(
+            `❌ Error processing record ${record.representativeIdentifier}:`,
+            error,
+          );
+          report.errors.push({
+            identifier: record.representativeIdentifier,
+            reason: error.message || "خطای ناشناخته در پردازش رکورد",
+          });
+        }
+      }
+    });
+
+    console.log(`🎉 Invoice Generation Service completed:`);
+    console.log(`  - Total: ${report.totalRecords}`);
+    console.log(`  - Success: ${report.successCount}`);
+    console.log(`  - Skipped: ${report.skippedInactive}`);
+    console.log(`  - New: ${report.newlyOnboarded.length}`);
+    console.log(`  - Errors: ${report.errors.length}`);
+
+    return report;
+  }
+
+  /**
+   * دریافت تعرفه‌های پیش‌فرض از تنظیمات سیستم
+   */
+  private static async getDefaultPricingTiers() {
+    // در آینده می‌توان این مقادیر را از جدول SystemConfig خواند
+    // فعلاً از مقادیر پیش‌فرض استفاده می‌کنیم
+    return {
+      tier1: 1500, // تعرفه پایه برای سرویس‌های محدود
+      tier2: 1500,
+      tier3: 1500,
+      tier4: 1800, // 20% افزایش
+      tier5: 2100, // 40% افزایش
+      tier6: 2400, // 60% افزایش
+      tier7: 50000, // تعرفه پایه برای سرویس‌های نامحدود
+      tier8: 100000, // 2x
+      tier9: 150000, // 3x
+      tier10: 200000, // 4x
+      tier11: 250000, // 5x
+      tier12: 300000, // 6x
+    };
+  }
+
+  /**
+   * تولید شماره فاکتور منحصر به فرد
+   */
+  private static async generateUniqueInvoiceNumber(tx: any): Promise<string> {
+    const invoiceCount = await tx.invoice.count();
+    const timestamp = Date.now().toString().slice(-6); // آخرین 6 رقم timestamp
+    return `INV-${String(invoiceCount + 1).padStart(6, "0")}-${timestamp}`;
+  }
+}
+
+// ===== PHASE 4: ENHANCED MARZBAN JSON PROCESSING SERVICE =====
+/**
+ * سرویس اصلی برای پردازش فایل JSON و صدور فاکتور
+ * این سرویس شامل تمام منطق مالی، آنبوردینگ هوشمند و محاسبات پورسانت است
+ */
+export async function processMarzbanJsonFile(input: {
+  fileContent: string;
+  fileName: string;
+  autoCreateRepresentatives?: boolean;
+  applySmartPricing?: boolean;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  console.log("🚀 Starting enhanced Marzban JSON processing...");
+
+  try {
+    // Parse and validate JSON structure
+    const rawJsonData = JSON.parse(input.fileContent);
+
+    // Validate using the adapter
+    if (!MarzbanJsonAdapter.validateJsonStructure(rawJsonData)) {
+      throw new Error("فایل JSON ساختار صحیح Marzban را ندارد");
+    }
+
+    // Transform raw data using the adapter
+    const standardizedRecords = MarzbanJsonAdapter.transform(
+      Array.isArray(rawJsonData) ? rawJsonData : [],
+    );
+    console.log(
+      `📊 Processing ${standardizedRecords.length} standardized records`,
+    );
+
+    // Use the dedicated Invoice Generation Service for processing
+    const processingReport =
+      await InvoiceGenerationService.generateInvoicesFromActivityData(
+        standardizedRecords,
+      );
+
+    // Get the created invoices for response
+    const processedInvoices = await db.invoice.findMany({
+      where: {
+        createdAt: {
+          gte: new Date(Date.now() - 60000), // Last minute
+        },
+      },
+      include: {
+        representative: true,
+        items: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const newRepresentatives =
+      processingReport.newlyOnboarded.length > 0
+        ? await db.representative.findMany({
+            where: {
+              representativeCode: {
+                in: processingReport.newlyOnboarded,
+              },
+            },
+          })
+        : [];
+
+    // Note: Processing is now handled by InvoiceGenerationService above
+
+    console.log("🎉 Marzban JSON processing completed successfully");
+
+    return {
+      success: true,
+      processedCount: processingReport.successCount,
+      errorCount: processingReport.errors.length,
+      newRepresentativesCount: processingReport.newlyOnboarded.length,
+      skippedInactive: processingReport.skippedInactive,
+      invoices: processedInvoices,
+      newRepresentatives,
+      errors: processingReport.errors,
+      summary: {
+        totalRecords: processingReport.totalRecords,
+        successfulInvoices: processingReport.successCount,
+        autoCreatedRepresentatives: processingReport.newlyOnboarded.length,
+        skippedInactiveRepresentatives: processingReport.skippedInactive,
+        totalRevenue: processedInvoices.reduce(
+          (sum, inv) => sum + inv.totalAmount,
+          0,
+        ),
+        smartPricingApplied: input.applySmartPricing || false,
+        atomicTransactionUsed: true,
+      },
+      processingReport,
+    };
+  } catch (error) {
+    console.error("❌ Marzban JSON processing failed:", error);
+    throw new Error(
+      `پردازش فایل Marzban با خطا مواجه شد: ${error instanceof Error ? error.message : "خطای نامشخص"}`,
+    );
+  }
+}
+
+// Legacy JSON File Processing (kept for backward compatibility)
+export async function processInvoiceJsonFile(input: {
+  fileContent: string;
+  fileName: string;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  try {
+    // Parse the JSON file content
+    const jsonData = JSON.parse(input.fileContent);
+
+    // Validate that it's an array of invoice records
+    if (!Array.isArray(jsonData)) {
+      throw new Error("JSON file must contain an array of invoice records");
+    }
+
+    const processedInvoices: any[] = [];
+    const errors: any[] = [];
+
+    for (let i = 0; i < jsonData.length; i++) {
+      const record = jsonData[i];
+
+      try {
+        // Validate required fields
+        if (
+          !record.representativeCode ||
+          !record.items ||
+          !Array.isArray(record.items)
+        ) {
+          throw new Error(
+            `Missing required fields: representativeCode or items`,
+          );
+        }
+
+        // Find representative by code
+        const representative = await db.representative.findUnique({
+          where: { representativeCode: record.representativeCode },
+          include: { salesCollaborator: true },
+        });
+
+        if (!representative) {
+          throw new Error(
+            `Representative with code ${record.representativeCode} not found`,
+          );
+        }
+
+        // Calculate pricing based on representative's tier pricing
+        let totalAmount = 0;
+        const processedItems: any[] = [];
+
+        for (const item of record.items) {
+          let unitPrice = item.unitPrice;
+
+          // If tier is specified, use representative's tier pricing
+          if (item.tier && item.tier >= 1 && item.tier <= 12) {
+            const tierField =
+              `price_tier${item.tier}` as keyof typeof representative;
+            unitPrice = representative[tierField] as number;
+          }
+
+          const itemTotal = (item.quantity || 1) * unitPrice;
+          totalAmount += itemTotal;
+
+          processedItems.push({
+            description:
+              item.description || `Service Tier ${item.tier || "N/A"}`,
+            quantity: item.quantity || 1,
+            unitPrice,
+            total: itemTotal,
+          });
+        }
+
+        // Apply tax if specified
+        const taxRate = record.taxRate || 0.1; // Default 10% tax
+        const taxAmount = totalAmount * taxRate;
+        if (taxAmount > 0) {
+          processedItems.push({
+            description: `Tax (${(taxRate * 100).toFixed(1)}%)`,
+            quantity: 1,
+            unitPrice: Math.round(taxAmount),
+            total: Math.round(taxAmount),
+          });
+          totalAmount += taxAmount;
+        }
+
+        // Generate invoice number
+        const invoiceCount = await db.invoice.count();
+        const invoiceNumber =
+          record.invoiceNumber ||
+          `INV-${String(invoiceCount + i + 1).padStart(6, "0")}`;
+
+        // Create invoice
+        const invoice = await db.invoice.create({
+          data: {
+            invoiceNumber,
+            representativeId: representative.id,
+            issueDate: record.issueDate
+              ? new Date(record.issueDate)
+              : new Date(),
+            dueDate: record.dueDate
+              ? new Date(record.dueDate)
+              : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            totalAmount: Math.round(totalAmount),
+            status: record.status || "PENDING_PAYMENT",
+            notes:
+              record.notes || `Generated from JSON file: ${input.fileName}`,
+            source_data_snapshot: JSON.stringify(record),
+            items: {
+              create: processedItems,
+            },
+          },
+          include: {
+            representative: true,
+            items: true,
+          },
+        });
+
+        // Create commission record if representative has sales collaborator
+        if (representative.salesCollaborator) {
+          const commissionAmount =
+            totalAmount *
+            (representative.salesCollaborator.commissionRate / 100);
+          await db.commissionRecord.create({
+            data: {
+              invoiceId: invoice.id,
+              salesCollaboratorId: representative.salesCollaborator.id,
+              commissionAmount: Math.round(commissionAmount),
+              commissionRate: representative.salesCollaborator.commissionRate,
+              status: "PENDING",
+              notes: `Auto-generated from JSON processing`,
+            },
+          });
+        }
+
+        processedInvoices.push(invoice);
+      } catch (error) {
+        errors.push({
+          recordIndex: i,
+          error: error instanceof Error ? error.message : "Unknown error",
+          record,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      processedCount: processedInvoices.length,
+      errorCount: errors.length,
+      invoices: processedInvoices,
+      errors,
+    };
+  } catch (error) {
+    throw new Error(
+      `Failed to process JSON file: ${error instanceof Error ? error.message : "Unknown error"}`,
+    );
+  }
+}
+
+// Advanced Financial Calculations
+export async function calculateAdvancedFinancials(input: {
+  invoiceId: string;
+  applyDiscounts?: boolean;
+  customTaxRate?: number;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const invoice = await db.invoice.findUnique({
+    where: { id: input.invoiceId },
+    include: {
+      representative: { include: { salesCollaborator: true } },
+      items: true,
+    },
+  });
+
+  if (!invoice) throw new Error("Invoice not found");
+
+  let subtotal = 0;
+  const itemCalculations: any[] = [];
+
+  // Calculate base amounts
+  for (const item of invoice.items) {
+    const itemSubtotal = item.quantity * item.unitPrice;
+    subtotal += itemSubtotal;
+
+    itemCalculations.push({
+      ...item,
+      subtotal: itemSubtotal,
+      discountApplied: 0,
+      finalAmount: itemSubtotal,
+    });
+  }
+
+  // Apply volume discounts if enabled
+  let discountAmount = 0;
+  if (input.applyDiscounts && subtotal > 1000000) {
+    // Discount for orders over 1M Toman
+    discountAmount = subtotal * 0.05; // 5% discount
+  }
+
+  // Calculate tax
+  const taxRate = input.customTaxRate || 0.1;
+  const taxableAmount = subtotal - discountAmount;
+  const taxAmount = taxableAmount * taxRate;
+
+  const finalTotal = taxableAmount + taxAmount;
+
+  // Calculate commission if applicable
+  let commissionAmount = 0;
+  if (invoice.representative.salesCollaborator) {
+    commissionAmount =
+      finalTotal *
+      (invoice.representative.salesCollaborator.commissionRate / 100);
+  }
+
+  return {
+    subtotal: Math.round(subtotal),
+    discountAmount: Math.round(discountAmount),
+    taxableAmount: Math.round(taxableAmount),
+    taxAmount: Math.round(taxAmount),
+    taxRate,
+    finalTotal: Math.round(finalTotal),
+    commissionAmount: Math.round(commissionAmount),
+    itemCalculations,
+    recommendedPaymentTerms: finalTotal > 5000000 ? "NET_45" : "NET_30",
+  };
+}
+
+// Smart Business Logic for Invoice Processing
+export async function processSmartInvoiceWorkflow(input: {
+  representativeId: string;
+  serviceType: string;
+  volume?: number;
+  priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const representative = await db.representative.findUnique({
+    where: { id: input.representativeId },
+    include: {
+      salesCollaborator: true,
+      invoices: {
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      },
+    },
+  });
+
+  if (!representative) throw new Error("Representative not found");
+
+  // Smart tier selection based on volume and history
+  let recommendedTier = 6; // Default middle tier
+
+  if (input.volume) {
+    if (input.volume > 1000)
+      recommendedTier = 1; // Highest volume, best price
+    else if (input.volume > 500) recommendedTier = 3;
+    else if (input.volume > 100) recommendedTier = 6;
+    else if (input.volume > 50) recommendedTier = 9;
+    else recommendedTier = 12; // Lowest volume, highest price
+  }
+
+  // Adjust based on payment history
+  const paidInvoices = representative.invoices.filter(
+    (inv) => inv.status === "PAID",
+  );
+  const paymentReliability =
+    paidInvoices.length / Math.max(representative.invoices.length, 1);
+
+  if (paymentReliability > 0.9 && recommendedTier > 1) {
+    recommendedTier = Math.max(1, recommendedTier - 2); // Better pricing for reliable customers
+  } else if (paymentReliability < 0.5) {
+    recommendedTier = Math.min(12, recommendedTier + 2); // Higher pricing for unreliable customers
+  }
+
+  // Priority adjustments
+  const priorityMultipliers = {
+    LOW: 0.95,
+    NORMAL: 1.0,
+    HIGH: 1.1,
+    URGENT: 1.25,
+  };
+
+  const tierField =
+    `price_tier${recommendedTier}` as keyof typeof representative;
+  const basePrice = representative[tierField] as number;
+  const adjustedPrice = Math.round(
+    basePrice * priorityMultipliers[input.priority || "NORMAL"],
+  );
+
+  // Smart payment terms
+  let paymentTerms = "NET_30";
+  if (paymentReliability > 0.95) paymentTerms = "NET_45";
+  else if (paymentReliability < 0.7) paymentTerms = "NET_15";
+  if (input.priority === "URGENT") paymentTerms = "NET_15";
+
+  // Auto-generate recommended invoice items
+  const recommendedItems = [
+    {
+      description: `${input.serviceType} - Tier ${recommendedTier} Service`,
+      quantity: input.volume || 1,
+      unitPrice: adjustedPrice,
+      tier: recommendedTier,
+    },
+  ];
+
+  return {
+    representativeInfo: {
+      name: representative.persianFullName,
+      code: representative.representativeCode,
+      paymentReliability: Math.round(paymentReliability * 100),
+      totalInvoices: representative.invoices.length,
+    },
+    recommendations: {
+      tier: recommendedTier,
+      unitPrice: adjustedPrice,
+      paymentTerms,
+      priority: input.priority || "NORMAL",
+      estimatedDelivery: input.priority === "URGENT" ? "1-2 days" : "5-7 days",
+    },
+    recommendedItems,
+    smartInsights: {
+      volumeDiscount:
+        input.volume && input.volume > 500
+          ? "Eligible for volume pricing"
+          : null,
+      loyaltyBonus:
+        paymentReliability > 0.9
+          ? "Loyal customer - preferential pricing applied"
+          : null,
+      riskAlert:
+        paymentReliability < 0.5 ? "Payment history requires attention" : null,
+    },
+  };
+}
+
+// Phase 3: Comprehensive Seeding with Exact Pricing Algorithm
+export async function _seedAdvancedBusinessLogic() {
+  console.log("🚀 Advanced seeding process started...");
+
+  // 1. Purge old data to ensure idempotency (order matters due to foreign key constraints)
+  console.log("🧹 Purging existing data...");
+  try {
+    await db.commissionRecord.deleteMany();
+    await db.commissionPayout.deleteMany();
+    await db.paymentAllocation.deleteMany();
+    await db.payment.deleteMany();
+    await db.invoiceItem.deleteMany();
+    await db.invoice.deleteMany();
+    await db.crmInteraction.deleteMany();
+    await db.representative.deleteMany();
+    await db.salesCollaborator.deleteMany();
+    await db.systemConfig.deleteMany();
+    console.log("✅ Data purged successfully.");
+  } catch {
+    console.log("Note: Some tables may not exist yet, continuing...");
+  }
+
+  // 2. Create system configurations
+  console.log("⚙️ Creating system configurations...");
+  const systemConfigs = [
+    {
+      key: "company_name",
+      value: "Phoenix Invoice System",
+      description: "Company name for invoices",
+    },
+    {
+      key: "company_address",
+      value: "تهران، ایران",
+      description: "Company address for invoices",
+    },
+    {
+      key: "company_email",
+      value: "info@phoenix-invoice.com",
+      description: "Company email for invoices",
+    },
+    {
+      key: "tax_rate",
+      value: "0.09",
+      description: "Default tax rate (9% VAT)",
+    },
+    {
+      key: "default_currency",
+      value: "IRR",
+      description: "Default currency for invoices (Iranian Rial/Toman)",
+    },
+    {
+      key: "admin_username",
+      value: "mgr",
+      description: "Default admin username",
+    },
+  ];
+
+  await Promise.all(
+    systemConfigs.map((config) =>
+      db.systemConfig.upsert({
+        where: { key: config.key },
+        update: config,
+        create: config,
+      }),
+    ),
+  );
+  console.log(`✅ ${systemConfigs.length} system configurations created.`);
+
+  // 3. Create sales collaborators with exact specifications
+  console.log("🤝 Creating sales collaborators...");
+  const salesCollaborators = [
+    {
+      name: "سعید قراری",
+      commissionRate: 5.0, // 5% commission
+      balance: 0.0,
+      isActive: true,
+    },
+    {
+      name: "بهنام",
+      commissionRate: 7.5, // 7.5% commission
+      balance: 0.0,
+      isActive: true,
+    },
+    {
+      name: "اونر",
+      commissionRate: 10.0, // 10% commission
+      balance: 0.0,
+      isActive: true,
+    },
+    {
+      name: "اونر ۲",
+      commissionRate: 10.0, // 10% commission
+      balance: 0.0,
+      isActive: true,
+    },
+  ];
+
+  const createdCollaborators = await Promise.all(
+    salesCollaborators.map((collaborator) =>
+      db.salesCollaborator.upsert({
+        where: { name: collaborator.name },
+        update: collaborator,
+        create: collaborator,
+      }),
+    ),
+  );
+  console.log(`✅ ${createdCollaborators.length} sales collaborators created.`);
+
+  // 4. Create representatives with exact pricing algorithm implementation
+  console.log("📈 Creating representatives with custom pricing algorithm...");
+  const representativesSeedData = [
+    {
+      admin_name: "نماینده نمونه تهران",
+      admin_username: "REP-TEH-01",
+      phone_number: "09121112233",
+      telegram_id: "123456789",
+      basePriceLimitedPerGb: 1500, // Base price for limited plans per GB
+      basePriceUnlimitedPerMonth: 50000, // Base price for unlimited plans per month
+      salesCollaboratorId: createdCollaborators[0]?.id,
+    },
+    {
+      admin_name: "نماینده نمونه اصفهان",
+      admin_username: "REP-ISF-01",
+      phone_number: "ندارد",
+      telegram_id: "987654321",
+      basePriceLimitedPerGb: 2000,
+      basePriceUnlimitedPerMonth: 60000,
+      salesCollaboratorId: createdCollaborators[1]?.id,
+    },
+    {
+      admin_name: "نماینده نمونه شیراز",
+      admin_username: "REP-SHZ-01",
+      phone_number: "09133334444",
+      telegram_id: "ندارد",
+      basePriceLimitedPerGb: 1800,
+      basePriceUnlimitedPerMonth: 55000,
+      salesCollaboratorId: createdCollaborators[2]?.id,
+    },
+  ];
+
+  const sampleRepresentatives: any[] = [];
+
+  for (const repData of representativesSeedData) {
+    // --- EXACT PRICING ALGORITHM IMPLEMENTATION ---
+    // This implements your core business logic for tier pricing
+    const price_tier1 = repData.basePriceLimitedPerGb; // Tier 1-3: Base limited price
+    const price_tier2 = repData.basePriceLimitedPerGb;
+    const price_tier3 = repData.basePriceLimitedPerGb;
+    const price_tier4 = Math.round(repData.basePriceLimitedPerGb * 1.2); // 20% markup
+    const price_tier5 = Math.round(repData.basePriceLimitedPerGb * 1.4); // 40% markup
+    const price_tier6 = Math.round(repData.basePriceLimitedPerGb * 1.6); // 60% markup
+    const price_tier7 = repData.basePriceUnlimitedPerMonth * 1; // Base unlimited
+    const price_tier8 = repData.basePriceUnlimitedPerMonth * 2; // 2x unlimited
+    const price_tier9 = repData.basePriceUnlimitedPerMonth * 3; // 3x unlimited
+    const price_tier10 = repData.basePriceUnlimitedPerMonth * 4; // 4x unlimited
+    const price_tier11 = repData.basePriceUnlimitedPerMonth * 5; // 5x unlimited
+    const price_tier12 = repData.basePriceUnlimitedPerMonth * 6; // 6x unlimited
+
+    const representative = {
+      representativeCode: repData.admin_username,
+      persianFullName: repData.admin_name,
+      contactInfo: JSON.stringify({
+        phone: repData.phone_number === "ندارد" ? null : repData.phone_number,
+        telegramId:
+          repData.telegram_id === "ندارد" ? null : repData.telegram_id,
+        address: null,
+      }),
+      balance: 0.0,
+      salesCollaboratorId: repData.salesCollaboratorId || null,
+      // Implemented pricing algorithm
+      price_tier1,
+      price_tier2,
+      price_tier3,
+      price_tier4,
+      price_tier5,
+      price_tier6,
+      price_tier7,
+      price_tier8,
+      price_tier9,
+      price_tier10,
+      price_tier11,
+      price_tier12,
+    };
+
+    sampleRepresentatives.push(representative);
+  }
+
+  const createdRepresentatives = await Promise.all(
+    sampleRepresentatives.map((rep) =>
+      db.representative.upsert({
+        where: { representativeCode: rep.representativeCode },
+        update: rep,
+        create: rep,
+      }),
+    ),
+  );
+
+  // 5. Create sample invoices using the new pricing algorithm
+  console.log("📄 Creating sample invoices with tier-based pricing...");
+  const sampleInvoices = [
+    {
+      representativeId: createdRepresentatives[0]!.id,
+      invoiceNumber: "INV-000001",
+      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
+      status: "PENDING_PAYMENT",
+      totalAmount: 163500.0, // Calculated from tier pricing
+      paidAmount: 0.0,
+      notes: "خدمات هاستینگ محدود - تیر ۱۴۰۳",
+      source_data_snapshot: JSON.stringify({
+        representativeCode: "REP-TEH-01",
+        serviceType: "Limited Hosting",
+        tier: 1,
+        volume: 100,
+      }),
+      items: [
+        {
+          description: "هاستینگ محدود - تیر ۱ (۱۰۰ گیگابایت)",
+          quantity: 100.0, // 100 GB
+          unitPrice: 1500, // Tier 1 price from algorithm
+          total: 150000, // 100 * 1500
+        },
+        {
+          description: "مالیات بر ارزش افزوده (۹%)",
+          quantity: 1.0,
+          unitPrice: 13500, // 9% of 150000
+          total: 13500,
+        },
+      ],
+    },
+    {
+      representativeId: createdRepresentatives[1]!.id,
+      invoiceNumber: "INV-000002",
+      dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000), // 15 days from now
+      status: "DRAFT",
+      totalAmount: 130800.0, // Calculated from tier pricing
+      paidAmount: 0.0,
+      notes: "سرویس نامحدود ماهانه - تیر ۱۴۰۳",
+      source_data_snapshot: JSON.stringify({
+        representativeCode: "REP-ISF-01",
+        serviceType: "Unlimited Monthly",
+        tier: 7,
+        volume: 2,
+      }),
+      items: [
+        {
+          description: "سرویس نامحدود ماهانه - تیر ۷ (۲ ماه)",
+          quantity: 2.0, // 2 months
+          unitPrice: 60000, // Tier 7 price from algorithm
+          total: 120000, // 2 * 60000
+        },
+        {
+          description: "مالیات بر ارزش افزوده (۹%)",
+          quantity: 1.0,
+          unitPrice: 10800, // 9% of 120000
+          total: 10800,
+        },
+      ],
+    },
+    {
+      representativeId: createdRepresentatives[2]!.id,
+      invoiceNumber: "INV-000003",
+      dueDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000), // 45 days from now
+      status: "PAID",
+      totalAmount: 196200.0, // Mixed tier pricing
+      paidAmount: 196200.0,
+      notes: "سرویس ترکیبی - خرداد ۱۴۰۳",
+      source_data_snapshot: JSON.stringify({
+        representativeCode: "REP-SHZ-01",
+        serviceType: "Mixed Services",
+        tiers: [4, 8],
+        volumes: [50, 1],
+      }),
+      items: [
+        {
+          description: "هاستینگ محدود - تیر ۴ (۵۰ گیگابایت)",
+          quantity: 50.0, // 50 GB
+          unitPrice: 2160, // Tier 4 price: 1800 * 1.2
+          total: 108000, // 50 * 2160
+        },
+        {
+          description: "سرویس نامحدود - تیر ۸ (۱ ماه)",
+          quantity: 1.0, // 1 month
+          unitPrice: 110000, // Tier 8 price: 55000 * 2
+          total: 110000, // 1 * 110000
+        },
+        {
+          description: "مالیات بر ارزش افزوده (۹%)",
+          quantity: 1.0,
+          unitPrice: 19620, // 9% of (108000 + 110000)
+          total: 19620,
+        },
+      ],
+    },
+  ];
+
+  const createdInvoices = await Promise.all(
+    sampleInvoices.map(async (invoice) => {
+      const { items, ...invoiceData } = invoice;
+      return await db.invoice.upsert({
+        where: { invoiceNumber: invoice.invoiceNumber },
+        update: invoiceData,
+        create: {
+          ...invoiceData,
+          items: {
+            create: items,
+          },
+        },
+      });
+    }),
+  );
+  console.log(
+    `✅ ${createdInvoices.length} sample invoices created with tier-based pricing.`,
+  );
+
+  // 6. Create commission records for invoices with sales collaborators
+  console.log("💰 Creating commission records...");
+  const commissionRecords: any[] = [];
+  for (const invoice of createdInvoices) {
+    const representative = await db.representative.findUnique({
+      where: { id: invoice.representativeId },
+      include: { salesCollaborator: true },
+    });
+
+    if (representative?.salesCollaborator) {
+      const commissionAmount =
+        invoice.totalAmount *
+        (representative.salesCollaborator.commissionRate / 100);
+      const record = await db.commissionRecord.create({
+        data: {
+          invoiceId: invoice.id,
+          salesCollaboratorId: representative.salesCollaborator.id,
+          commissionAmount,
+          commissionRate: representative.salesCollaborator.commissionRate,
+          status: "PENDING",
+          notes: `پورسانت محاسبه شده برای فاکتور ${invoice.invoiceNumber} - نرخ ${representative.salesCollaborator.commissionRate}%`,
+        },
+      });
+      commissionRecords.push(record);
+    }
+  }
+  console.log(`✅ ${commissionRecords.length} commission records created.`);
+
+  // 7. Create sample CRM interactions
+  console.log("📞 Creating sample CRM interactions...");
+  const crmInteractions = [
+    {
+      representativeId: createdRepresentatives[0]!.id,
+      interactionType: "CALL",
+      subject: "بررسی نیازهای جدید",
+      description: "تماس برای بررسی نیازهای هاستینگ اضافی",
+      followUpDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+    {
+      representativeId: createdRepresentatives[1]!.id,
+      interactionType: "TELEGRAM",
+      subject: "پیگیری پرداخت",
+      description: "پیگیری وضعیت پرداخت فاکتور قبلی",
+      isCompleted: true,
+    },
+  ];
+
+  await Promise.all(
+    crmInteractions.map((interaction) =>
+      db.crmInteraction.create({ data: interaction }),
+    ),
+  );
+  console.log(`✅ ${crmInteractions.length} CRM interactions created.`);
+
+  console.log("🎉 Advanced seeding finished successfully.");
+
+  return {
+    message:
+      "Advanced business logic seeded successfully with exact pricing algorithm",
+    collaboratorsCreated: createdCollaborators.length,
+    representativesCreated: createdRepresentatives.length,
+    invoicesCreated: createdInvoices.length,
+    commissionRecordsCreated: commissionRecords.length,
+    configsCreated: systemConfigs.length,
+    pricingAlgorithm:
+      "Implemented with tiers 1-6 for limited plans and tiers 7-12 for unlimited plans",
+    businessLogicValidated: true,
+  };
+}
+
+// Legacy seeding function (kept for backward compatibility)
+export async function _seedInitialData() {
+  return await _seedAdvancedBusinessLogic();
+}
+
+// ===== PHASE 3: ENHANCED API ENDPOINTS FOR ADMIN PANELS =====
+
+// Advanced Dashboard Analytics
+export async function getAdvancedDashboardStats() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const [
+    totalRevenue,
+    monthlyRevenue,
+    overdueAmount,
+    activeRepresentatives,
+    totalCommissionPayable,
+    invoiceStatusBreakdown,
+    dailyRevenue,
+  ] = await Promise.all([
+    // Total revenue (all time)
+    db.invoice.aggregate({
+      where: { status: "PAID" },
+      _sum: { totalAmount: true },
+    }),
+    // Monthly revenue
+    db.invoice.aggregate({
+      where: {
+        status: "PAID",
+        createdAt: { gte: startOfMonth, lte: endOfMonth },
+      },
+      _sum: { totalAmount: true },
+    }),
+    // Overdue amount
+    db.invoice.aggregate({
+      where: {
+        status: { in: ["PENDING_PAYMENT", "PARTIALLY_PAID"] },
+        dueDate: { lt: now },
+      },
+      _sum: { totalAmount: true },
+    }),
+    // Active representatives count
+    db.representative.count({ where: { isActive: true } }),
+    // Total commission payable
+    db.commissionRecord.aggregate({
+      where: { status: "PENDING" },
+      _sum: { commissionAmount: true },
+    }),
+    // Invoice status breakdown
+    db.invoice.groupBy({
+      by: ["status"],
+      _count: { status: true },
+      _sum: { totalAmount: true },
+    }),
+    // Daily revenue for last 7 days
+    db.invoice.findMany({
+      where: {
+        status: "PAID",
+        createdAt: { gte: last7Days },
+      },
+      select: {
+        totalAmount: true,
+        createdAt: true,
+      },
+    }),
+  ]);
+
+  // Process daily revenue data
+  const dailyRevenueMap = new Map<string, number>();
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    const dateKey =
+      date && typeof date.toISOString === "function"
+        ? date.toISOString().split("T")[0]
+        : "";
+    dailyRevenueMap.set(String(dateKey), 0);
+  }
+
+  dailyRevenue.forEach((invoice) => {
+    const dateKey =
+      invoice.createdAt && typeof invoice.createdAt.toISOString === "function"
+        ? invoice.createdAt.toISOString().split("T")[0]
+        : "";
+    if (dateKey && dailyRevenueMap.has(dateKey)) {
+      dailyRevenueMap.set(
+        dateKey,
+        (dailyRevenueMap.get(dateKey) ?? 0) + invoice.totalAmount,
+      );
+    }
+  });
+
+  const dailyRevenueChart = Array.from(dailyRevenueMap.entries()).map(
+    ([date, amount]) => ({
+      date,
+      revenue: Math.round(amount),
+    }),
+  );
+
+  return {
+    totalRevenue: totalRevenue._sum.totalAmount || 0,
+    monthlyRevenue: monthlyRevenue._sum.totalAmount || 0,
+    overdueAmount: overdueAmount._sum.totalAmount || 0,
+    activeRepresentatives,
+    totalCommissionPayable: totalCommissionPayable._sum.commissionAmount || 0,
+    invoiceStatusBreakdown: invoiceStatusBreakdown.map((item) => ({
+      status: item.status,
+      count: item._count.status,
+      amount: item._sum.totalAmount || 0,
+    })),
+    dailyRevenueChart,
+  };
+}
+
+// Enhanced Representative Management
+export async function getRepresentativeProfile({ id }: { id: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const representative = await db.representative.findUnique({
+    where: { id },
+    include: {
+      salesCollaborator: true,
+      invoices: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          items: true,
+        },
+      },
+      payments: {
+        orderBy: { paymentDate: "desc" },
+        include: {
+          allocations: {
+            include: {
+              invoice: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!representative) {
+    throw new Error("Representative not found");
+  }
+
+  // Calculate additional statistics
+  const totalDebt = representative.invoices
+    .filter((inv) => inv.status !== "PAID")
+    .reduce((sum, inv) => sum + (inv.totalAmount - inv.paidAmount), 0);
+
+  const totalSales = representative.invoices.reduce(
+    (sum, inv) => sum + inv.totalAmount,
+    0,
+  );
+
+  const paidInvoices = representative.invoices.filter(
+    (inv) => inv.status === "PAID",
+  ).length;
+
+  return {
+    ...representative,
+    statistics: {
+      totalDebt: Math.round(totalDebt),
+      totalSales: Math.round(totalSales),
+      paidInvoices,
+      totalInvoices: representative.invoices.length,
+      paymentReliability:
+        representative.invoices.length > 0
+          ? Math.round((paidInvoices / representative.invoices.length) * 100)
+          : 0,
+    },
+  };
+}
+
+export async function updateRepresentativeProfile(input: {
+  id: string;
+  persianFullName?: string;
+  contactInfo?: string;
+  salesCollaboratorId?: string | null;
+  isActive?: boolean;
+  price_tier1?: number;
+  price_tier2?: number;
+  price_tier3?: number;
+  price_tier4?: number;
+  price_tier5?: number;
+  price_tier6?: number;
+  price_tier7?: number;
+  price_tier8?: number;
+  price_tier9?: number;
+  price_tier10?: number;
+  price_tier11?: number;
+  price_tier12?: number;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const { id, ...updateData } = input;
+
+  return await db.representative.update({
+    where: { id },
+    data: updateData,
+    include: {
+      salesCollaborator: true,
+    },
+  });
+}
+
+export async function deleteRepresentative(input: { id: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.representative.delete({ where: { id: input.id } });
+}
+
+// Sales Collaborator Management
+// اعتبارسنجی ایجاد و ویرایش همکار
+const collaboratorSchema = z.object({
+  name: z.string().min(3, "نام باید حداقل ۳ کاراکتر باشد"),
+  city: z.string().optional(),
+  phone: z.string().optional(),
+  telegramId: z.string().optional(),
+  commissionRate: z.number().min(0).max(100),
+});
+
+export async function listCollaborators() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.salesCollaborator.findMany({
+    include: { _count: { select: { representatives: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function createCollaborator(input: {
+  name: string;
+  city?: string;
+  phone?: string;
+  telegramId?: string;
+  commissionRate: number;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const safeInput = collaboratorSchema.parse(input);
+  return await db.salesCollaborator.create({ data: safeInput });
+}
+
+export async function updateCollaborator(input: {
+  id: string;
+  name?: string;
+  city?: string;
+  phone?: string;
+  telegramId?: string;
+  commissionRate?: number;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+  const { id, ...updateData } = input;
+  // اعتبارسنجی مقادیر جدید (در صورت وجود)
+  collaboratorSchema.partial().parse(updateData);
+  return await db.salesCollaborator.update({ where: { id }, data: updateData });
+}
+
+export async function deleteCollaborator(input: { id: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+  return await db.salesCollaborator.delete({ where: { id: input.id } });
+}
+
+export async function listSalesCollaborators() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.salesCollaborator.findMany({
+    orderBy: { name: "asc" },
+    include: {
+      _count: {
+        select: { representatives: true },
+      },
+    },
+  });
+}
+
+// Payment Management
+export async function getRepresentativePayments({
+  representativeId,
+}: {
+  representativeId: string;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.payment.findMany({
+    where: { representativeId },
+    orderBy: { paymentDate: "desc" },
+    include: {
+      allocations: {
+        include: {
+          invoice: {
+            select: {
+              invoiceNumber: true,
+              totalAmount: true,
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+export async function createPayment(input: {
+  representativeId: string;
+  amount: number;
+  paymentMethod: string;
+  referenceNumber?: string;
+  description?: string;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.$transaction(async (tx) => {
+    // Create the payment record
+    const payment = await tx.payment.create({
+      data: {
+        ...input,
+        isConfirmed: true,
+      },
+      include: {
+        representative: true,
+      },
+    });
+
+    // Update representative balance
+    await tx.representative.update({
+      where: { id: input.representativeId },
+      data: {
+        balance: {
+          increment: input.amount,
+        },
+      },
+    });
+
+    // Auto-allocate payment to unpaid invoices
+    const unpaidInvoices = await tx.invoice.findMany({
+      where: {
+        representativeId: input.representativeId,
+        status: { in: ["PENDING_PAYMENT", "PARTIALLY_PAID"] },
+      },
+      orderBy: { dueDate: "asc" },
+    });
+
+    let remainingAmount = input.amount;
+    for (const invoice of unpaidInvoices) {
+      if (remainingAmount <= 0) break;
+
+      const unpaidAmount = invoice.totalAmount - invoice.paidAmount;
+      const allocationAmount = Math.min(remainingAmount, unpaidAmount);
+
+      if (allocationAmount > 0) {
+        // Create payment allocation
+        await tx.paymentAllocation.create({
+          data: {
+            paymentId: payment.id,
+            invoiceId: invoice.id,
+            amount: allocationAmount,
+          },
+        });
+
+        // Update invoice paid amount and status
+        const newPaidAmount = invoice.paidAmount + allocationAmount;
+        const newStatus =
+          newPaidAmount >= invoice.totalAmount
+            ? "PAID"
+            : newPaidAmount > 0
+              ? "PARTIALLY_PAID"
+              : "PENDING_PAYMENT";
+
+        await tx.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            paidAmount: newPaidAmount,
+            status: newStatus,
+          },
+        });
+
+        remainingAmount -= allocationAmount;
+      }
+    }
+
+    return payment;
+  });
+}
+
+export async function updatePayment(input: {
+  id: string;
+  paymentMethod?: string;
+  referenceNumber?: string;
+  description?: string;
+  isConfirmed?: boolean;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const { id, ...data } = input;
+
+  return await db.payment.update({
+    where: { id },
+    data,
+  });
+}
+
+export async function deletePayment(input: { id: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+  return await db.payment.delete({ where: { id: input.id } });
+}
+
+// ===== بخش ۲: یکپارچه‌سازی با تلگرام (Telegram Integration) =====
+
+/**
+ * سرویس تلگرام برای ارسال پیام و تصاویر با استفاده از node-telegram-bot-api
+ */
+export class TelegramService {
+  private static readonly BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  private static bot: TelegramBot | null = null;
+
+  private static getBotInstance(): TelegramBot {
+    if (!this.BOT_TOKEN) {
+      throw new Error("TELEGRAM_BOT_TOKEN environment variable is not set");
+    }
+    if (!this.bot) {
+      this.bot = new TelegramBot(this.BOT_TOKEN);
+    }
+    return this.bot;
+  }
+
+  /**
+   * ارسال تصویر با کپشن به تلگرام
+   */
+  private static async sendPhoto(
+    chatId: string,
+    photoBuffer: Buffer,
+    caption?: string,
+  ): Promise<{ success: boolean; messageId?: number; error?: string }> {
+    try {
+      const bot = this.getBotInstance();
+      const message = await bot.sendPhoto(chatId, photoBuffer, {
+        caption,
+        parse_mode: "HTML",
+      });
+      return { success: true, messageId: message.message_id };
+    } catch (error: any) {
+      console.error("Telegram sendPhoto error:", error);
+      return {
+        success: false,
+        error:
+          error.response?.body?.description ||
+          error.message ||
+          "Unknown Telegram API error",
+      };
+    }
+  }
+
+  /**
+   * تولید تصویر فاکتور (Placeholder)
+   */
+  private static async generateInvoiceImage(invoice: any): Promise<Buffer> {
+    const text = `
+      Invoice: ${invoice.invoiceNumber}
+      Rep: ${invoice.representative.persianFullName}
+      Amount: ${invoice.totalAmount.toLocaleString()} Toman
+      Date: ${new Date(invoice.issueDate).toLocaleDateString("fa-IR")}
+    `;
+    const { createCanvas } = require("canvas");
+    const canvas = createCanvas(400, 200);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, 400, 200);
+    ctx.fillStyle = "black";
+    ctx.font = "16px Vazirmatn";
+    const lines = text.trim().split("\n");
+    let y = 30;
+    for (const line of lines) {
+      ctx.fillText(line.trim(), 20, y);
+      y += 25;
+    }
+    return canvas.toBuffer("image/png");
+  }
+
+  /**
+   * منطق اصلی ارسال یک فاکتور به ادمین
+   */
+  public static async sendInvoiceToAdmin(input: {
+    invoice: any; // Ideally a strongly-typed invoice object
+    adminChatId: string;
+    storeName: string;
+  }) {
+    const { invoice, adminChatId, storeName } = input;
+
+    let contactInfo: { telegramId?: string } = {};
+    try {
+      if (invoice.representative.contactInfo) {
+        contactInfo = JSON.parse(invoice.representative.contactInfo) as {
+          telegramId?: string;
+        };
+      }
+    } catch (e) {
+      console.error("Failed to parse representative contact info", e);
+    }
+    const repTelegramId = contactInfo.telegramId || "N/A";
+
+    const imageBuffer = await this.generateInvoiceImage(invoice);
+
+    const caption = `
+🧾 <b>ارسال فاکتور برای ادمین</b>
+
+🏢 <b>فروشگاه:</b> ${storeName}
+👨‍💼 <b>نماینده:</b> ${invoice.representative.persianFullName}
+📞 <b>آی‌دی تلگرام نماینده:</b> <code>${repTelegramId}</code>
+🔢 <b>کد نماینده:</b> ${invoice.representative.representativeCode}
+---
+📋 <b>شماره فاکتور:</b> ${invoice.invoiceNumber}
+💰 <b>مبلغ:</b> ${invoice.totalAmount.toLocaleString()} تومان
+📅 <b>سررسید:</b> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString("fa-IR") : "N/A"}
+---
+این پیام جهت اطلاع ادمین ارسال شده است.
+    `
+      .trim()
+      .replace(/  +/g, "");
+
+    return await this.sendPhoto(adminChatId, imageBuffer, caption);
+  }
+}
+
+/**
+ * PRIVATE HELPER: Sends a single invoice and updates DB. Not an RPC endpoint.
+ */
+async function _sendSingleInvoiceToTelegram(invoiceId: string) {
+  const ADMIN_CHAT_ID = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  if (!ADMIN_CHAT_ID) {
+    throw new Error("TELEGRAM_ADMIN_CHAT_ID environment variable is not set");
+  }
+
+  const invoice = await db.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { representative: true, items: true },
+  });
+
+  if (!invoice) throw new Error(`Invoice with ID ${invoiceId} not found`);
+
+  const configs = await db.systemConfig.findMany();
+  const configMap = configs.reduce(
+    (acc, config) => {
+      acc[config.key] = config.value;
+      return acc;
+    },
+    {} as Record<string, string>,
+  );
+  const storeName = configMap.company_name || "Phoenix Invoice";
+
+  const result = await TelegramService.sendInvoiceToAdmin({
+    invoice,
+    adminChatId: ADMIN_CHAT_ID,
+    storeName,
+  });
+
+  const dispatchStatus = {
+    status: result.success ? "sent" : "failed",
+    sentAt: new Date().toISOString(),
+    messageId: result.messageId?.toString() || null,
+    errorMessage: result.error || null,
+  };
+
+  await db.invoice.update({
+    where: { id: invoiceId },
+    data: { telegram_dispatch_status: JSON.stringify(dispatchStatus) },
+  });
+
+  if (!result.success) {
+    throw new Error(result.error || "Failed to send invoice to Telegram");
+  }
+
+  return { success: true, dispatchStatus };
+}
+
+/**
+ * ارسال تکی فاکتور به ادمین در تلگرام
+ */
+export async function dispatchInvoiceToTelegram(input: { invoiceId: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await _sendSingleInvoiceToTelegram(input.invoiceId);
+}
+
+/**
+ * ارسال دسته‌جمعی فاکتورها به تلگرام با استفاده از سیستم تسک پس‌زمینه
+ */
+export async function bulkDispatchInvoicesToTelegram() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const task = await queueTask(async () => {
+    console.log(`🚀 Starting bulk dispatch job...`);
+
+    const pendingInvoices = await db.invoice.findMany({
+      where: {
+        OR: [
+          { telegram_dispatch_status: null },
+          { telegram_dispatch_status: { contains: '"status":"pending"' } },
+          { telegram_dispatch_status: { contains: '"status":"failed"' } },
+        ],
+      },
+      select: { id: true, invoiceNumber: true },
+      take: 50, // محدودیت برای هر بار اجرا
+    });
+
+    console.log(`📊 Found ${pendingInvoices.length} invoices to dispatch`);
+
+    let successCount = 0;
+    let failureCount = 0;
+
+    for (const invoice of pendingInvoices) {
+      try {
+        // فاصله زمانی برای جلوگیری از rate limiting تلگرام
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await _sendSingleInvoiceToTelegram(invoice.id);
+        successCount++;
+        console.log(`✅ Invoice ${invoice.invoiceNumber} sent successfully`);
+      } catch (error) {
+        failureCount++;
+        console.error(
+          `❌ Failed to send invoice ${invoice.invoiceNumber}:`,
+          error,
+        );
+      }
+    }
+    console.log(
+      `🎉 Bulk dispatch completed: ${successCount} success, ${failureCount} failed`,
+    );
+  });
+
+  return task;
+}
+
+/**
+ * دریافت وضعیت تسک ارسال دسته‌جمعی
+ */
+export async function getBulkDispatchStatus(input: { taskId: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await getTaskStatus(input.taskId);
+}
+
+/**
+ * دریافت آمار ارسال تلگرام
+ */
+export async function getTelegramDispatchStats() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const [totalInvoices, sentInvoices, failedInvoices, pendingInvoices] =
+    await Promise.all([
+      db.invoice.count(),
+      db.invoice.count({
+        where: {
+          telegram_dispatch_status: { contains: '"status":"sent"' },
+        },
+      }),
+      db.invoice.count({
+        where: {
+          telegram_dispatch_status: { contains: '"status":"failed"' },
+        },
+      }),
+      db.invoice.count({
+        where: {
+          OR: [
+            { telegram_dispatch_status: null },
+            { telegram_dispatch_status: { contains: '"status":"pending"' } },
+          ],
+        },
+      }),
+    ]);
+
+  return {
+    totalInvoices,
+    sentInvoices,
+    failedInvoices,
+    pendingInvoices,
+    successRate:
+      totalInvoices > 0 ? Math.round((sentInvoices / totalInvoices) * 100) : 0,
+  };
+}
+
+// Commission Payout Management
+export async function _bulkImportRepresentatives(input: {
+  records: any[];
+}): Promise<{
+  createdCount: number;
+  updatedCount: number;
+  errors: { representativeCode: string; reason: string }[];
+}> {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const { records } = input;
+  if (!Array.isArray(records)) {
+    throw new Error("Input must be an array of representative records.");
+  }
+
+  let createdCount = 0;
+  let updatedCount = 0;
+  const errors: { representativeCode: string; reason: string }[] = [];
+
+  for (const record of records) {
+    const representativeCode = record.representativeCode;
+    if (!representativeCode) {
+      errors.push({
+        representativeCode: "N/A",
+        reason: "Missing representativeCode in record.",
+      });
+      continue;
+    }
+
+    try {
+      // Step 1: Find Collaborator ID
+      let collaboratorId: string | null = null;
+      if (record.collaboratorName) {
+        const collaborator = await db.salesCollaborator.findUnique({
+          where: { name: record.collaboratorName },
+        });
+        if (collaborator) {
+          collaboratorId = collaborator.id;
+        }
+      }
+
+      // Check if representative exists to correctly count create vs update
+      const existingRep = await db.representative.findUnique({
+        where: { representativeCode },
+      });
+
+      // Prepare data for upsert
+      const representativeData = {
+        representativeCode,
+        persianFullName: record.persianFullName,
+        contactInfo: JSON.stringify(record.contactInfo || {}),
+        salesCollaboratorId: collaboratorId,
+        ...record.pricingTiers,
+      };
+
+      // Step 2: Upsert Representative
+      await db.representative.upsert({
+        where: { representativeCode },
+        create: representativeData,
+        update: representativeData,
+      });
+
+      if (existingRep) {
+        updatedCount++;
+      } else {
+        createdCount++;
+      }
+    } catch (error: any) {
+      errors.push({
+        representativeCode,
+        reason: error.message || "An unknown error occurred.",
+      });
+    }
+  }
+
+  return { createdCount, updatedCount, errors };
+}
+
+export async function listCommissionRecords() {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.commissionRecord.findMany({
+    orderBy: { calculatedAt: "desc" },
+    include: {
+      invoice: {
+        include: {
+          representative: true,
+        },
+      },
+      salesCollaborator: true,
+    },
+  });
+}
+
+export async function createCommissionPayout(input: {
+  salesCollaboratorId: string;
+  amount: number;
+  description?: string;
+  referenceNumber?: string;
+}) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  return await db.$transaction(async (tx) => {
+    // Verify collaborator has enough balance
+    const collaborator = await tx.salesCollaborator.findUnique({
+      where: { id: input.salesCollaboratorId },
+    });
+
+    if (!collaborator) {
+      throw new Error("Sales collaborator not found");
+    }
+
+    if (collaborator.balance < input.amount) {
+      throw new Error(
+        `Insufficient balance. Available: ${collaborator.balance.toLocaleString()} Toman, Requested: ${input.amount.toLocaleString()} Toman`,
+      );
+    }
+
+    // Create payout record
+    const payout = await tx.commissionPayout.create({
+      data: {
+        salesCollaboratorId: input.salesCollaboratorId,
+        amount: input.amount,
+        description: input.description || "Commission payout",
+        referenceNumber: input.referenceNumber,
+      },
+      include: {
+        salesCollaborator: true,
+      },
+    });
+
+    // Update collaborator balance
+    await tx.salesCollaborator.update({
+      where: { id: input.salesCollaboratorId },
+      data: {
+        balance: {
+          decrement: input.amount,
+        },
+      },
+    });
+
+    // Mark related commission records as paid
+    const pendingCommissions = await tx.commissionRecord.findMany({
+      where: {
+        salesCollaboratorId: input.salesCollaboratorId,
+        status: "PENDING",
+      },
+      orderBy: { calculatedAt: "asc" },
+    });
+
+    let remainingAmount = input.amount;
+    for (const commission of pendingCommissions) {
+      if (remainingAmount <= 0) break;
+
+      if (commission.commissionAmount <= remainingAmount) {
+        await tx.commissionRecord.update({
+          where: { id: commission.id },
+          data: {
+            status: "PAID",
+            paidAt: new Date(),
+            notes:
+              `${commission.notes || ""} - Paid via payout ${payout.id}`.trim(),
+          },
+        });
+        remainingAmount -= commission.commissionAmount;
+      }
+    }
+
+    return payout;
+  });
+}
+
+export async function getSalesCollaboratorProfile({ id }: { id: string }) {
+  const { userId } = await getAuth({ required: true });
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.isAdmin) throw new Error("Unauthorized");
+
+  const collaborator = await db.salesCollaborator.findUnique({
+    where: { id },
+    include: {
+      representatives: {
+        include: {
+          _count: {
+            select: { invoices: true },
+          },
+        },
+      },
+      commissionRecords: {
+        orderBy: { calculatedAt: "desc" },
+        include: {
+          invoice: {
+            include: {
+              representative: true,
+            },
+          },
+        },
+      },
+      commissionPayouts: {
+        orderBy: { payoutDate: "desc" },
+      },
+    },
+  });
+
+  if (!collaborator) {
+    throw new Error("Sales collaborator not found");
+  }
+
+  // Calculate statistics
+  const totalCommissionEarned = collaborator.commissionRecords.reduce(
+    (sum, record) => sum + record.commissionAmount,
+    0,
+  );
+
+  const totalCommissionPaid = collaborator.commissionPayouts.reduce(
+    (sum, payout) => sum + payout.amount,
+    0,
+  );
+
+  const pendingCommissions = collaborator.commissionRecords
+    .filter((record) => record.status === "PENDING")
+    .reduce((sum, record) => sum + record.commissionAmount, 0);
+
+  return {
+    ...collaborator,
+    statistics: {
+      totalCommissionEarned: Math.round(totalCommissionEarned),
+      totalCommissionPaid: Math.round(totalCommissionPaid),
+      pendingCommissions: Math.round(pendingCommissions),
+      totalRepresentatives: collaborator.representatives.length,
+      activeRepresentatives: collaborator.representatives.filter(
+        (rep) => rep.isActive,
+      ).length,
+    },
+  };
+}

@@ -1,0 +1,237 @@
+/* Import Vazirmatn font for Persian text support */
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;200;300;400;500;600;700;800;900&display=swap');
+
+@layer base {
+  :root {
+    /* Obsidian & Gold Theme - Light Mode */
+    --background: 0 0% 98%; /* Very light gray background */
+    --foreground: 0 0% 10%; /* Deep obsidian text */
+    --card: 0 0% 100%; /* Pure white cards */
+    --card-foreground: 0 0% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+    --primary: 43 74% 49%; /* Metallic Gold */
+    --primary-foreground: 0 0% 10%; /* Deep obsidian on gold */
+    --secondary: 0 0% 16%; /* Dark obsidian */
+    --secondary-foreground: 0 0% 94%; /* Light text on dark */
+    --muted: 0 0% 96%; /* Very light muted background */
+    --muted-foreground: 0 0% 40%; /* Medium gray text */
+    --accent: 43 74% 49%; /* Gold accent */
+    --accent-foreground: 0 0% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 90%; /* Light border */
+    --input: 0 0% 90%;
+    --ring: 43 74% 49%; /* Gold focus ring */
+    --radius: 0.75rem; /* Slightly more rounded */
+    
+    /* Custom Phoenix colors */
+    --obsidian: 0 0% 10%; /* Deep obsidian */
+    --obsidian-light: 0 0% 16%; /* Lighter obsidian */
+    --gold: 43 74% 49%; /* Metallic gold */
+    --gold-light: 43 74% 65%; /* Lighter gold for hover states */
+    --gold-dark: 43 74% 35%; /* Darker gold for active states */
+  }
+
+  .dark {
+    /* Obsidian & Gold Theme - Dark Mode (Primary) */
+    --background: 0 0% 10%; /* Deep obsidian background */
+    --foreground: 0 0% 94%; /* Light gray text */
+    --card: 0 0% 16%; /* Dark obsidian cards */
+    --card-foreground: 0 0% 94%;
+    --popover: 0 0% 16%;
+    --popover-foreground: 0 0% 94%;
+    --primary: 43 74% 49%; /* Metallic Gold */
+    --primary-foreground: 0 0% 10%; /* Deep obsidian on gold */
+    --secondary: 0 0% 20%; /* Slightly lighter obsidian */
+    --secondary-foreground: 0 0% 94%;
+    --muted: 0 0% 20%; /* Muted dark background */
+    --muted-foreground: 0 0% 65%; /* Medium light gray */
+    --accent: 43 74% 49%; /* Gold accent */
+    --accent-foreground: 0 0% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 20%; /* Dark border */
+    --input: 0 0% 20%;
+    --ring: 43 74% 49%; /* Gold focus ring */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  html {
+    font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    direction: rtl; /* Right-to-left for Persian */
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    font-variant-numeric: tabular-nums;
+  }
+  
+  /* Ensure English text and numbers display correctly in RTL */
+  .ltr {
+    direction: ltr;
+  }
+  
+  /* Custom scrollbar styling for dark theme */
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-muted;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/30;
+  }
+}
+
+/* Phoenix Brand Elements */
+.phoenix-gradient {
+  background: linear-gradient(135deg, hsl(var(--gold)) 0%, hsl(var(--gold-light)) 50%, hsl(var(--gold)) 100%);
+}
+
+.phoenix-gradient-text {
+  background: linear-gradient(135deg, hsl(var(--gold)) 0%, hsl(var(--gold-light)) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.obsidian-card {
+  @apply bg-card border border-border/50 backdrop-blur-sm;
+  background: linear-gradient(145deg, hsl(var(--card)) 0%, hsl(var(--muted)) 100%);
+}
+
+.gold-glow {
+  box-shadow: 0 0 20px hsl(var(--gold) / 0.3);
+}
+
+.obsidian-glow {
+  box-shadow: 0 8px 32px hsl(var(--obsidian) / 0.3);
+}
+
+/* Additional utility classes for Phoenix theme */
+.bg-obsidian {
+  background-color: hsl(var(--obsidian));
+}
+
+.bg-obsidian-light {
+  background-color: hsl(var(--obsidian-light));
+}
+
+.bg-gold {
+  background-color: hsl(var(--gold));
+}
+
+.bg-gold-light {
+  background-color: hsl(var(--gold-light));
+}
+
+.bg-gold-dark {
+  background-color: hsl(var(--gold-dark));
+}
+
+.text-obsidian {
+  color: hsl(var(--obsidian));
+}
+
+.text-obsidian-light {
+  color: hsl(var(--obsidian-light));
+}
+
+.text-gold {
+  color: hsl(var(--gold));
+}
+
+.text-gold-light {
+  color: hsl(var(--gold-light));
+}
+
+.text-gold-dark {
+  color: hsl(var(--gold-dark));
+}
+
+.border-gold {
+  border-color: hsl(var(--gold));
+}
+
+.border-obsidian {
+  border-color: hsl(var(--obsidian));
+}
+
+/* Status indicators */
+.status-indicator {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.status-success {
+  @apply bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400;
+}
+
+.status-warning {
+  @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400;
+}
+
+.status-error {
+  @apply bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400;
+}
+
+.status-info {
+  @apply bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400;
+}
+
+/* Animated elements */
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.invoice-status-draft {
+  @apply bg-muted text-muted-foreground;
+}
+
+.invoice-status-sent {
+  @apply bg-blue-100 text-blue-800;
+}
+
+.invoice-status-paid {
+  @apply bg-green-100 text-green-800;
+}
+
+.invoice-status-overdue {
+  @apply bg-red-100 text-red-800;
+}
+
+.invoice-status-cancelled {
+  @apply bg-gray-100 text-gray-800;
+}

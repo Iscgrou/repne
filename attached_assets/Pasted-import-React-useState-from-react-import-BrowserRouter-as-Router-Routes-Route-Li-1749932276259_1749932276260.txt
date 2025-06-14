@@ -1,0 +1,3188 @@
+import React, { useState } from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Link,
+  useLocation,
+  useParams,
+} from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import {
+  LayoutDashboard,
+  FileText,
+  Users,
+  Settings,
+  Plus,
+  Eye,
+  Edit,
+  Menu,
+  X,
+  DollarSign,
+  Clock,
+  CheckCircle,
+  Upload,
+  Calculator,
+  Brain,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  ArrowUpDown,
+  Search,
+  User,
+  CreditCard,
+  TrendingUp,
+  AlertCircle,
+  Save,
+  Send,
+  MessageCircle,
+  Loader,
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  useReactTable,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  flexRender,
+  type ColumnDef,
+  type SortingState,
+  type ColumnFiltersState,
+  type VisibilityState,
+} from "@tanstack/react-table";
+import { apiClient } from "~/client/api";
+import { useAuth, useToast } from "~/client/utils";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Input,
+  Label,
+  Textarea,
+  Badge,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Alert,
+  Switch as SwitchComponent,
+} from "~/components/ui";
+
+// ===== بخش ۲: کامپوننت‌های UI هسته (Core UI Components) =====
+
+// الزام ۲.۱: کامپوننت کارت آمار (StatCard)
+interface StatCardProps {
+  title: string;
+  value: string | number;
+  icon: React.ReactNode;
+  description?: string;
+  trend?: {
+    value: number;
+    isPositive: boolean;
+  };
+}
+
+function StatCard({ title, value, icon, description, trend }: StatCardProps) {
+  return (
+    <Card className="obsidian-card hover:gold-glow transition-all duration-300 group">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+          {title}
+        </CardTitle>
+        <div className="p-2 rounded-lg bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-300">
+          {icon}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-1">
+          <div className="text-2xl font-bold phoenix-gradient-text">
+            {typeof value === "number" ? value.toLocaleString() : value}
+          </div>
+          {description && (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          )}
+          {trend && (
+            <div
+              className={`flex items-center text-xs ${
+                trend.isPositive ? "text-green-600" : "text-red-600"
+              }`}
+            >
+              <span className="mr-1">{trend.isPositive ? "↗️" : "↘️"}</span>
+              {Math.abs(trend.value)}% از ماه گذشته
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// الزام ۲.۲: کامپوننت هدر صفحه (PageHeader)
+interface PageHeaderProps {
+  title: string;
+  description?: string;
+  children?: React.ReactNode;
+}
+
+function PageHeader({ title, description, children }: PageHeaderProps) {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+      <div className="space-y-1">
+        <h1 className="text-3xl font-bold phoenix-gradient-text">{title}</h1>
+        {description && <p className="text-muted-foreground">{description}</p>}
+      </div>
+      {children && <div className="flex items-center gap-2">{children}</div>}
+    </div>
+  );
+}
+
+// الزام ۲.۳: کامپوننت جدول داده (DataTable)
+interface DataTableProps<TData, TValue> {
+  columns: ColumnDef<TData, TValue>[];
+  data: TData[];
+  searchPlaceholder?: string;
+  onRowClick?: (row: TData) => void;
+}
+
+function DataTable<TData, TValue>({
+  columns,
+  data,
+  searchPlaceholder = "جستجو...",
+  onRowClick,
+}: DataTableProps<TData, TValue>) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [globalFilter, setGlobalFilter] = useState("");
+
+  const table = useReactTable({
+    data,
+    columns,
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    onColumnVisibilityChange: setColumnVisibility,
+    onGlobalFilterChange: setGlobalFilter,
+    globalFilterFn: "includesString",
+    state: {
+      sorting,
+      columnFilters,
+      columnVisibility,
+      globalFilter,
+    },
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* جستجوی عمومی */}
+      <div className="flex items-center space-x-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+          <Input
+            placeholder={searchPlaceholder}
+            value={globalFilter ?? ""}
+            onChange={(event) => setGlobalFilter(String(event.target.value))}
+            className="pr-10"
+          />
+        </div>
+      </div>
+
+      {/* جدول */}
+      <div className="rounded-lg border border-border/50 bg-card/50 backdrop-blur-sm">
+        <Table>
+          <TableHeader>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id} className="border-border/50">
+                {headerGroup.headers.map((header) => {
+                  return (
+                    <TableHead key={header.id} className="text-right">
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(
+                            header.column.columnDef.header,
+                            header.getContext(),
+                          )}
+                    </TableHead>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {table.getRowModel().rows?.length ? (
+              table.getRowModel().rows.map((row) => (
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && "selected"}
+                  className={`border-border/50 hover:bg-accent/50 transition-colors ${
+                    onRowClick ? "cursor-pointer" : ""
+                  }`}
+                  onClick={() => onRowClick?.(row.original)}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id} className="text-right">
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext(),
+                      )}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  هیچ داده‌ای یافت نشد.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* صفحه‌بندی */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          <p className="text-sm text-muted-foreground">
+            نمایش{" "}
+            {table.getState().pagination.pageIndex *
+              table.getState().pagination.pageSize +
+              1}{" "}
+            تا{" "}
+            {Math.min(
+              (table.getState().pagination.pageIndex + 1) *
+                table.getState().pagination.pageSize,
+              table.getFilteredRowModel().rows.length,
+            )}{" "}
+            از {table.getFilteredRowModel().rows.length} نتیجه
+          </p>
+        </div>
+        <div className="flex items-center space-x-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => table.setPageIndex(0)}
+            disabled={!table.getCanPreviousPage()}
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => table.previousPage()}
+            disabled={!table.getCanPreviousPage()}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => table.nextPage()}
+            disabled={!table.getCanNextPage()}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+            disabled={!table.getCanNextPage()}
+          >
+            <ChevronsLeft className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Helper function برای ایجاد ستون قابل مرتب‌سازی
+function createSortableHeader(title: string) {
+  return ({ column }: { column: any }) => {
+    return (
+      <Button
+        variant="ghost"
+        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        className="h-auto p-0 font-semibold hover:bg-transparent hover:text-primary"
+      >
+        {title}
+        <ArrowUpDown className="mr-2 h-4 w-4" />
+      </Button>
+    );
+  };
+}
+
+const routes = [
+  { path: "/", name: "Dashboard", icon: LayoutDashboard },
+  { path: "/invoices", name: "Invoices", icon: FileText },
+  { path: "/representatives", name: "Representatives", icon: Users },
+  { path: "/collaborators", name: "Collaborators", icon: User },
+  { path: "/admin", name: "تنظیمات", icon: Settings },
+];
+
+function Layout({ children }: { children: React.ReactNode }) {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(!isMobile);
+  const [isDarkMode, setIsDarkMode] = useState(true); // Default to dark mode for Obsidian theme
+  const location = useLocation();
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) {
+        setIsSidebarOpen(true);
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  React.useEffect(() => {
+    // Apply dark mode class to document
+    if (isDarkMode) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [isDarkMode]);
+
+  return (
+    <div className="flex h-screen bg-background text-foreground transition-colors duration-300">
+      {/* Mobile header */}
+      <header className="md:hidden sticky top-0 bg-background/80 backdrop-blur-sm z-10 p-4 border-b border-border/50">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+              <span className="text-primary-foreground font-bold text-sm">
+                P
+              </span>
+            </div>
+            <h1 className="text-xl font-bold phoenix-gradient-text">Phoenix</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              {isDarkMode ? (
+                <svg
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
+                  />
+                </svg>
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            >
+              <Menu className="h-6 w-6" />
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* Sidebar */}
+      <AnimatePresence>
+        {(isSidebarOpen || !isMobile) && (
+          <motion.nav
+            initial={isMobile ? { x: -300 } : false}
+            animate={{ x: 0 }}
+            exit={isMobile ? { x: -300 } : undefined}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="sticky top-0 w-72 bg-card/95 backdrop-blur-sm border-l border-border/50 p-6 flex flex-col z-20 h-screen obsidian-glow"
+          >
+            {/* Sidebar Header */}
+            <div className="flex justify-between items-center mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center gold-glow">
+                  <span className="text-primary-foreground font-bold text-lg">
+                    P
+                  </span>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold phoenix-gradient-text">
+                    Phoenix
+                  </h1>
+                  <p className="text-xs text-muted-foreground">
+                    سیستم مدیریت فاکتور
+                  </p>
+                </div>
+              </div>
+              {isMobile && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsSidebarOpen(false)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-6 w-6" />
+                </Button>
+              )}
+            </div>
+
+            {/* Navigation */}
+            <div className="space-y-2 flex-1">
+              {routes.map((route) => {
+                const isActive = location.pathname === route.path;
+                return (
+                  <Link
+                    key={route.path}
+                    to={route.path}
+                    className={`flex items-center gap-3 p-3 rounded-xl transition-all duration-200 group ${
+                      isActive
+                        ? "bg-primary text-primary-foreground gold-glow"
+                        : "hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                    onClick={() => isMobile && setIsSidebarOpen(false)}
+                  >
+                    <route.icon
+                      className={`h-5 w-5 transition-transform group-hover:scale-110 ${
+                        isActive
+                          ? "text-primary-foreground"
+                          : "text-muted-foreground"
+                      }`}
+                    />
+                    <span className="font-medium">{route.name}</span>
+                    {isActive && (
+                      <motion.div
+                        layoutId="activeRoute"
+                        className="mr-auto w-2 h-2 rounded-full bg-primary-foreground"
+                        initial={false}
+                        transition={{
+                          type: "spring",
+                          stiffness: 300,
+                          damping: 30,
+                        }}
+                      />
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+
+            {/* Theme Toggle & User Info */}
+            <div className="border-t border-border/50 pt-4 mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-muted-foreground">
+                  حالت تاریک
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsDarkMode(!isDarkMode)}
+                  className="h-8 w-8 p-0"
+                >
+                  {isDarkMode ? (
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+                      />
+                    </svg>
+                  ) : (
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
+                      />
+                    </svg>
+                  )}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                نسخه ۱.۰.۰ - Phoenix Invoice System
+              </div>
+            </div>
+          </motion.nav>
+        )}
+      </AnimatePresence>
+
+      {/* Main content */}
+      <main className="flex-1 overflow-auto">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={location.pathname}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="min-h-full"
+          >
+            <div className="p-6 lg:p-8">{children}</div>
+          </motion.div>
+        </AnimatePresence>
+      </main>
+    </div>
+  );
+}
+
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const auth = useAuth({ required: true });
+  const { data: user } = useQuery(["currentUser"], apiClient.getCurrentUser);
+  const setAdminMutation = useMutation(apiClient.setCurrentUserAsAdmin);
+
+  if (auth.status === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user?.isAdmin) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl phoenix-gradient bg-clip-text text-transparent">
+              Phoenix Invoice System
+            </CardTitle>
+            <CardDescription>
+              You need admin access to use this system
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-center">
+            <Button
+              onClick={() => setAdminMutation.mutate()}
+              disabled={setAdminMutation.isLoading}
+              className="w-full"
+            >
+              {setAdminMutation.isLoading ? "Setting up..." : "Become Admin"}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
+function Dashboard() {
+  const { data: stats } = useQuery(
+    ["dashboardStats"],
+    apiClient.getDashboardStats,
+  );
+  const { data: recentInvoices } = useQuery(
+    ["invoices"],
+    apiClient.listInvoices,
+  );
+
+  // تعریف ستون‌های جدول فاکتورهای اخیر
+  const invoiceColumns: ColumnDef<any>[] = [
+    {
+      accessorKey: "invoiceNumber",
+      header: createSortableHeader("شماره فاکتور"),
+      cell: ({ row }) => (
+        <div className="font-medium">{row.getValue("invoiceNumber")}</div>
+      ),
+    },
+    {
+      accessorKey: "representative.persianFullName",
+      header: "نماینده",
+      cell: ({ row }) => (
+        <div>{row.original.representative.persianFullName}</div>
+      ),
+    },
+    {
+      accessorKey: "totalAmount",
+      header: createSortableHeader("مبلغ"),
+      cell: ({ row }) => (
+        <div className="font-medium">
+          {row.getValue<number>("totalAmount").toLocaleString()} تومان
+        </div>
+      ),
+    },
+    {
+      accessorKey: "status",
+      header: "وضعیت",
+      cell: ({ row }) => {
+        const status = row.getValue<string>("status");
+        return (
+          <Badge className={`invoice-status-${status.toLowerCase()}`}>
+            {status}
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "dueDate",
+      header: createSortableHeader("سررسید"),
+      cell: ({ row }) => {
+        const dueDate = row.getValue<string>("dueDate");
+        return dueDate
+          ? new Date(dueDate).toLocaleDateString("fa-IR")
+          : "تعیین نشده";
+      },
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="داشبورد"
+        description="خوش آمدید به سیستم مدیریت فاکتور Phoenix"
+      />
+
+      {/* کارت‌های آماری */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard
+          title="کل درآمد"
+          value={`${stats?.totalRevenue?.toLocaleString() || "0"} تومان`}
+          icon={<DollarSign className="h-4 w-4" />}
+          description="درآمد کل سیستم"
+          trend={{
+            value: 12.5,
+            isPositive: true,
+          }}
+        />
+        <StatCard
+          title="تعداد نمایندگان"
+          value={stats?.totalRepresentatives || 0}
+          icon={<Users className="h-4 w-4" />}
+          description="نمایندگان فعال"
+        />
+        <StatCard
+          title="فاکتورهای پرداخت شده"
+          value={stats?.paidInvoices || 0}
+          icon={<CheckCircle className="h-4 w-4" />}
+          description="فاکتورهای تسویه شده"
+          trend={{
+            value: 8.2,
+            isPositive: true,
+          }}
+        />
+        <StatCard
+          title="در انتظار پرداخت"
+          value={stats?.pendingInvoices || 0}
+          icon={<Clock className="h-4 w-4" />}
+          description="فاکتورهای معلق"
+          trend={{
+            value: 3.1,
+            isPositive: false,
+          }}
+        />
+      </div>
+
+      {/* جدول فاکتورهای اخیر */}
+      <Card className="obsidian-card">
+        <CardHeader>
+          <CardTitle className="phoenix-gradient-text">
+            فاکتورهای اخیر
+          </CardTitle>
+          <CardDescription>آخرین فعالیت‌های فاکتورسازی</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DataTable
+            columns={invoiceColumns}
+            data={recentInvoices?.slice(0, 10) || []}
+            searchPlaceholder="جستجو در فاکتورها..."
+          />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// کامپوننت دکمه ارسال تلگرام
+function TelegramDispatchButton({ invoiceId }: { invoiceId: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const dispatchMutation = useMutation(apiClient.dispatchInvoiceToTelegram, {
+    onSuccess: () => {
+      toast({ title: "فاکتور با موفقیت به تلگرام ارسال شد" });
+      queryClient.invalidateQueries(["invoices"]);
+      queryClient.invalidateQueries(["telegramStats"]);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "خطا در ارسال به تلگرام",
+        description: error.message,
+        variant: "destructive",
+      });
+      queryClient.invalidateQueries(["invoices"]);
+      queryClient.invalidateQueries(["telegramStats"]);
+    },
+  });
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-8 w-8 p-0"
+      onClick={(e) => {
+        e.stopPropagation(); // جلوگیری از کلیک روی سطر
+        dispatchMutation.mutate({ invoiceId });
+      }}
+      disabled={dispatchMutation.isLoading}
+    >
+      {dispatchMutation.isLoading ? (
+        <Loader className="h-4 w-4 animate-spin" />
+      ) : (
+        <Send className="h-4 w-4" />
+      )}
+    </Button>
+  );
+}
+
+function InvoicesPage() {
+  const { data: invoices } = useQuery(["invoices"], apiClient.listInvoices);
+  const { data: representatives } = useQuery(
+    ["representatives"],
+    apiClient.listRepresentatives,
+  );
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+
+  // تعریف ستون‌های جدول فاکتورها
+  const invoiceColumns: ColumnDef<any>[] = [
+    {
+      accessorKey: "invoiceNumber",
+      header: createSortableHeader("شماره فاکتور"),
+      cell: ({ row }) => (
+        <div className="font-medium">{row.getValue("invoiceNumber")}</div>
+      ),
+    },
+    {
+      accessorKey: "representative.persianFullName",
+      header: "نماینده",
+      cell: ({ row }) => (
+        <div>{row.original.representative.persianFullName}</div>
+      ),
+    },
+    {
+      accessorKey: "totalAmount",
+      header: createSortableHeader("مبلغ"),
+      cell: ({ row }) => (
+        <div className="font-medium">
+          {row.getValue<number>("totalAmount").toLocaleString()} تومان
+        </div>
+      ),
+    },
+    {
+      accessorKey: "status",
+      header: "وضعیت",
+      cell: ({ row }) => {
+        const status = row.getValue<string>("status");
+        return (
+          <Badge className={`invoice-status-${status.toLowerCase()}`}>
+            {status}
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "dueDate",
+      header: createSortableHeader("سررسید"),
+      cell: ({ row }) => {
+        const dueDate = row.getValue<string>("dueDate");
+        return dueDate
+          ? new Date(dueDate).toLocaleDateString("fa-IR")
+          : "تعیین نشده";
+      },
+    },
+    {
+      id: "telegram",
+      header: "تلگرام",
+      cell: ({ row }) => {
+        const dispatchStatusRaw = row.original.telegram_dispatch_status;
+        let dispatchStatus: {
+          status?: string;
+          sentAt?: string;
+          errorMessage?: string;
+        } | null = null;
+        try {
+          dispatchStatus = dispatchStatusRaw
+            ? (JSON.parse(dispatchStatusRaw) as {
+                status?: string;
+                sentAt?: string;
+                errorMessage?: string;
+              })
+            : null;
+        } catch {
+          dispatchStatus = null;
+        }
+
+        // Tooltip logic
+        let tooltip = "در انتظار ارسال";
+        let color = "text-gray-400";
+        if (
+          dispatchStatus &&
+          typeof dispatchStatus === "object" &&
+          dispatchStatus.status
+        ) {
+          if (dispatchStatus.status === "sent") {
+            color = "text-green-600";
+            tooltip = dispatchStatus.sentAt
+              ? `ارسال موفق در ${new Date(dispatchStatus.sentAt).toLocaleDateString("fa-IR")}`
+              : "ارسال موفق";
+          } else if (dispatchStatus.status === "failed") {
+            color = "text-red-600";
+            tooltip = dispatchStatus.errorMessage
+              ? `خطا: ${dispatchStatus.errorMessage}`
+              : "ارسال ناموفق";
+          }
+        }
+
+        return (
+          <div className="flex items-center justify-center group">
+            <MessageCircle className={`h-4 w-4 ${color}`} />
+            <span className="absolute z-10 hidden group-hover:inline-block bg-black text-white text-xs rounded px-2 py-1 mt-8 rtl:right-auto rtl:left-0 ltr:left-auto ltr:right-0 shadow-lg pointer-events-none">
+              {tooltip}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
+      id: "actions",
+      header: "عملیات",
+      cell: ({ row }) => (
+        <div className="flex space-x-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Edit className="h-4 w-4" />
+          </Button>
+          <TelegramDispatchButton invoiceId={row.original.id} />
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="مدیریت فاکتورها"
+        description="مدیریت و نظارت بر تمام فاکتورهای سیستم"
+      >
+        <div className="flex items-center gap-2">
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild>
+              <Button className="phoenix-gradient">
+                <Plus className="h-4 w-4 ml-2" />
+                ایجاد فاکتور جدید
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <CreateInvoiceForm
+                representatives={representatives || []}
+                onSuccess={() => setShowCreateDialog(false)}
+              />
+            </DialogContent>
+          </Dialog>
+        </div>
+      </PageHeader>
+
+      <Card className="obsidian-card">
+        <CardContent className="p-6">
+          <DataTable
+            columns={invoiceColumns}
+            data={invoices || []}
+            searchPlaceholder="جستجو در فاکتورها..."
+          />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function CreateInvoiceForm({
+  representatives,
+  onSuccess,
+}: {
+  representatives: any[];
+  onSuccess: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [formData, setFormData] = useState({
+    representativeId: "",
+    dueDate: "",
+    notes: "",
+    items: [{ description: "", quantity: 1, unitPrice: 0 }],
+  });
+
+  const createInvoiceMutation = useMutation(apiClient.createInvoice, {
+    onSuccess: () => {
+      queryClient.invalidateQueries(["invoices"]);
+      queryClient.invalidateQueries(["dashboardStats"]);
+      onSuccess();
+    },
+  });
+
+  const addItem = () => {
+    setFormData({
+      ...formData,
+      items: [
+        ...formData.items,
+        { description: "", quantity: 1, unitPrice: 0 },
+      ],
+    });
+  };
+
+  const updateItem = (index: number, field: string, value: any) => {
+    const newItems = [...formData.items];
+    newItems[index] = {
+      ...newItems[index],
+      [field]: value,
+    } as (typeof newItems)[number];
+    setFormData({ ...formData, items: newItems });
+  };
+
+  const removeItem = (index: number) => {
+    setFormData({
+      ...formData,
+      items: formData.items.filter((_, i) => i !== index),
+    });
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    createInvoiceMutation.mutate(formData);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <DialogHeader>
+        <DialogTitle>Create New Invoice</DialogTitle>
+        <DialogDescription>
+          Fill in the details to create a new invoice
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label htmlFor="representative">Representative</Label>
+          <Select
+            value={formData.representativeId}
+            onValueChange={(value) =>
+              setFormData({ ...formData, representativeId: value })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select a representative" />
+            </SelectTrigger>
+            <SelectContent>
+              {representatives.map((rep) => (
+                <SelectItem key={rep.id} value={rep.id}>
+                  {rep.persianFullName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <Label htmlFor="dueDate">Due Date</Label>
+          <Input
+            id="dueDate"
+            type="date"
+            value={formData.dueDate}
+            onChange={(e) =>
+              setFormData({ ...formData, dueDate: e.target.value })
+            }
+            required
+          />
+        </div>
+      </div>
+
+      <div>
+        <Label htmlFor="notes">Notes</Label>
+        <Textarea
+          id="notes"
+          value={formData.notes}
+          onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+          placeholder="Additional notes..."
+        />
+      </div>
+
+      <div>
+        <div className="flex justify-between items-center mb-2">
+          <Label>Invoice Items</Label>
+          <Button type="button" variant="outline" size="sm" onClick={addItem}>
+            <Plus className="h-4 w-4 mr-1" />
+            Add Item
+          </Button>
+        </div>
+
+        {formData.items.map((item, index) => (
+          <div key={index} className="grid grid-cols-12 gap-2 mb-2">
+            <div className="col-span-5">
+              <Input
+                placeholder="Description"
+                value={item.description}
+                onChange={(e) =>
+                  updateItem(index, "description", e.target.value)
+                }
+                required
+              />
+            </div>
+            <div className="col-span-2">
+              <Input
+                type="number"
+                placeholder="Qty"
+                value={item.quantity}
+                onChange={(e) =>
+                  updateItem(index, "quantity", parseFloat(e.target.value))
+                }
+                required
+              />
+            </div>
+            <div className="col-span-3">
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="Unit Price"
+                value={item.unitPrice}
+                onChange={(e) =>
+                  updateItem(index, "unitPrice", parseFloat(e.target.value))
+                }
+                required
+              />
+            </div>
+            <div className="col-span-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => removeItem(index)}
+                disabled={formData.items.length === 1}
+              >
+                Remove
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <DialogFooter>
+        <Button
+          type="submit"
+          disabled={createInvoiceMutation.isLoading}
+          className="w-full"
+        >
+          {createInvoiceMutation.isLoading ? "Creating..." : "Create Invoice"}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+function RepresentativesPage() {
+  const { data: representatives } = useQuery(
+    ["representatives"],
+    apiClient.listRepresentatives,
+  );
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+
+  // تعریف ستون‌های جدول نمایندگان
+  const representativeColumns: ColumnDef<any>[] = [
+    {
+      accessorKey: "representativeCode",
+      header: createSortableHeader("کد نماینده"),
+      cell: ({ row }) => (
+        <div className="font-medium">{row.getValue("representativeCode")}</div>
+      ),
+    },
+    {
+      accessorKey: "persianFullName",
+      header: createSortableHeader("نام نماینده"),
+      cell: ({ row }) => (
+        <div className="font-medium">{row.getValue("persianFullName")}</div>
+      ),
+    },
+    {
+      accessorKey: "salesCollaborator.name",
+      header: "همکار فروش",
+      cell: ({ row }) => (
+        <div>{row.original.salesCollaborator?.name || "تعیین نشده"}</div>
+      ),
+    },
+    {
+      accessorKey: "balance",
+      header: createSortableHeader("موجودی"),
+      cell: ({ row }) => {
+        const balance = row.getValue<number>("balance");
+        return (
+          <div
+            className={`font-medium ${
+              balance >= 0 ? "text-green-600" : "text-red-600"
+            }`}
+          >
+            {balance.toLocaleString()} تومان
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "_count.invoices",
+      header: createSortableHeader("تعداد فاکتور"),
+      cell: ({ row }) => <div>{row.original._count.invoices} فاکتور</div>,
+    },
+    {
+      accessorKey: "isActive",
+      header: "وضعیت",
+      cell: ({ row }) => {
+        const isActive = row.getValue<boolean>("isActive");
+        return (
+          <Badge className={isActive ? "status-success" : "status-error"}>
+            {isActive ? "فعال" : "غیرفعال"}
+          </Badge>
+        );
+      },
+    },
+    {
+      id: "actions",
+      header: "عملیات",
+      cell: ({ row }) => (
+        <div className="flex space-x-2">
+          <Link
+            to={`/representatives/${row.original.id}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Button variant="outline" size="sm" className="h-8 w-8 p-0">
+              <Eye className="h-4 w-4" />
+            </Button>
+          </Link>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="مدیریت نمایندگان"
+        description="مدیریت اطلاعات نمایندگان و همکاران فروش"
+      >
+        <div className="flex items-center gap-2">
+          <Button
+            variant={viewMode === "grid" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setViewMode("grid")}
+          >
+            نمای کارتی
+          </Button>
+          <Button
+            variant={viewMode === "table" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setViewMode("table")}
+          >
+            نمای جدولی
+          </Button>
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild>
+              <Button className="phoenix-gradient">
+                <Plus className="h-4 w-4 ml-2" />
+                افزودن نماینده
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <CreateRepresentativeForm
+                onSuccess={() => setShowCreateDialog(false)}
+              />
+            </DialogContent>
+          </Dialog>
+        </div>
+      </PageHeader>
+
+      {viewMode === "grid" ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {representatives?.map((rep) => {
+            const contactInfo = rep.contactInfo
+              ? (JSON.parse(rep.contactInfo) as { phone?: string })
+              : {};
+            return (
+              <Card
+                key={rep.id}
+                className="obsidian-card hover:gold-glow transition-all duration-300 cursor-pointer"
+                onClick={() =>
+                  (window.location.href = `/representatives/${rep.id}`)
+                }
+              >
+                <CardHeader>
+                  <CardTitle className="phoenix-gradient-text">
+                    {rep.persianFullName}
+                  </CardTitle>
+                  <CardDescription className="font-mono">
+                    {rep.representativeCode}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {contactInfo.phone && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-muted-foreground">تلفن:</span>
+                        <span>{contactInfo.phone}</span>
+                      </div>
+                    )}
+                    {rep.salesCollaborator && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-muted-foreground">
+                          همکار فروش:
+                        </span>
+                        <span>{rep.salesCollaborator.name}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground">موجودی:</span>
+                      <span
+                        className={`font-medium ${
+                          rep.balance >= 0 ? "text-green-600" : "text-red-600"
+                        }`}
+                      >
+                        {rep.balance.toLocaleString()} تومان
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">
+                        {rep._count.invoices} فاکتور
+                      </span>
+                      <Badge
+                        className={
+                          rep.isActive ? "status-success" : "status-error"
+                        }
+                      >
+                        {rep.isActive ? "فعال" : "غیرفعال"}
+                      </Badge>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <Card className="obsidian-card">
+          <CardContent className="p-6">
+            <DataTable
+              columns={representativeColumns}
+              data={representatives || []}
+              searchPlaceholder="جستجو در نمایندگان..."
+            />
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function CreateRepresentativeForm({ onSuccess }: { onSuccess: () => void }) {
+  const queryClient = useQueryClient();
+  const { data: salesCollaborators } = useQuery(
+    ["salesCollaborators"],
+    apiClient.listSalesCollaborators,
+  );
+  const [formData, setFormData] = useState({
+    representativeCode: "",
+    persianFullName: "",
+    contactInfo: "",
+    salesCollaboratorId: "",
+  });
+
+  const createRepresentativeMutation = useMutation(
+    apiClient.createRepresentative,
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(["representatives"]);
+        onSuccess();
+      },
+    },
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const contactData = {
+      phone: formData.contactInfo,
+      telegramId: "",
+      address: "",
+    };
+    createRepresentativeMutation.mutate({
+      representativeCode: formData.representativeCode,
+      persianFullName: formData.persianFullName,
+      contactInfo: JSON.stringify(contactData),
+      salesCollaboratorId: formData.salesCollaboratorId || undefined,
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <DialogHeader>
+        <DialogTitle>افزودن نماینده جدید</DialogTitle>
+        <DialogDescription>اطلاعات نماینده جدید را وارد کنید</DialogDescription>
+      </DialogHeader>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <Label htmlFor="representativeCode">کد نماینده *</Label>
+          <Input
+            id="representativeCode"
+            value={formData.representativeCode}
+            onChange={(e) =>
+              setFormData({ ...formData, representativeCode: e.target.value })
+            }
+            required
+          />
+        </div>
+        <div>
+          <Label htmlFor="persianFullName">نام کامل فارسی *</Label>
+          <Input
+            id="persianFullName"
+            value={formData.persianFullName}
+            onChange={(e) =>
+              setFormData({ ...formData, persianFullName: e.target.value })
+            }
+            required
+          />
+        </div>
+        <div>
+          <Label htmlFor="contactInfo">تلفن</Label>
+          <Input
+            id="contactInfo"
+            value={formData.contactInfo}
+            onChange={(e) =>
+              setFormData({ ...formData, contactInfo: e.target.value })
+            }
+          />
+        </div>
+        <div>
+          <Label htmlFor="salesCollaboratorId">همکار فروش</Label>
+          <Select
+            value={formData.salesCollaboratorId}
+            onValueChange={(value) =>
+              setFormData({ ...formData, salesCollaboratorId: value })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="انتخاب همکار" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="NONE">بدون ��مکار</SelectItem>
+              {salesCollaborators?.map((collaborator) => (
+                <SelectItem key={collaborator.id} value={collaborator.id}>
+                  {collaborator.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <DialogFooter>
+        <Button
+          type="submit"
+          disabled={createRepresentativeMutation.isLoading}
+          className="w-full"
+        >
+          {createRepresentativeMutation.isLoading
+            ? "در حال افزودن..."
+            : "افزودن نماینده"}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+function AdminPage() {
+  const { data: config } = useQuery(
+    ["systemConfig"],
+    apiClient.getSystemConfig,
+  );
+  const seedDataMutation = useMutation(apiClient._seedInitialData);
+  const [activeTab, setActiveTab] = useState("data");
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="تنظیمات و پیکربندی"
+        description="مدیریت سیستم و پردازش‌های پیشرفته"
+      />
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full grid-cols-6">
+          <TabsTrigger value="data">Data Management</TabsTrigger>
+          <TabsTrigger value="json">JSON Processing</TabsTrigger>
+          <TabsTrigger value="financial">Financial Tools</TabsTrigger>
+          <TabsTrigger value="smart">Smart Workflows</TabsTrigger>
+          <TabsTrigger value="telegram">Telegram</TabsTrigger>
+          <TabsTrigger value="bulk-import">Bulk Import</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="data" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Data Management</CardTitle>
+                <CardDescription>
+                  Initialize and manage system data
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  onClick={() => seedDataMutation.mutate()}
+                  disabled={seedDataMutation.isLoading}
+                  className="w-full"
+                >
+                  {seedDataMutation.isLoading
+                    ? "Seeding..."
+                    : "Seed Initial Data"}
+                </Button>
+                {seedDataMutation.data && (
+                  <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded">
+                    <p className="text-green-800 text-sm">
+                      {seedDataMutation.data.message}
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>System Configuration</CardTitle>
+                <CardDescription>Current system settings</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {config &&
+                    Object.entries(config).map(([key, value]) => (
+                      <div key={key} className="flex justify-between">
+                        <span className="text-sm font-medium">{key}:</span>
+                        <span className="text-sm text-muted-foreground">
+                          {value}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="json" className="space-y-6">
+          <JsonProcessingPanel />
+        </TabsContent>
+
+        <TabsContent value="financial" className="space-y-6">
+          <FinancialToolsPanel />
+        </TabsContent>
+
+        <TabsContent value="smart" className="space-y-6">
+          <SmartWorkflowPanel />
+        </TabsContent>
+
+        <TabsContent value="telegram" className="space-y-6">
+          <TelegramManagementPanel />
+        </TabsContent>
+
+        <TabsContent value="bulk-import" className="space-y-6">
+          <BulkImportPanel />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function BulkImportPanel() {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const bulkImportMutation = useMutation(apiClient._bulkImportRepresentatives, {
+    onSuccess: (result) => {
+      toast({
+        title: "Bulk Import Completed",
+        description: `Created: ${result.createdCount}, Updated: ${result.updatedCount}, Errors: ${result.errors.length}`,
+      });
+      if (result.createdCount > 0 || result.updatedCount > 0) {
+        queryClient.invalidateQueries(["representatives"]);
+      }
+      setProcessingResult(result);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Bulk Import Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+      setProcessingResult(null);
+    },
+  });
+
+  const [processingResult, setProcessingResult] = useState<{
+    createdCount: number;
+    updatedCount: number;
+    errors: { representativeCode: string; reason: string }[];
+  } | null>(null);
+
+  const handleFileUpload = async () => {
+    if (!selectedFile) return;
+    setProcessingResult(null);
+
+    try {
+      const fileContent = await selectedFile.text();
+      const records = JSON.parse(fileContent);
+      if (!Array.isArray(records)) {
+        toast({
+          title: "Invalid JSON Format",
+          description: "The file must contain a JSON array of records.",
+          variant: "destructive",
+        });
+        return;
+      }
+      bulkImportMutation.mutate({ records });
+    } catch (error) {
+      console.error("Error reading or parsing file:", error);
+      toast({
+        title: "Error Reading or Parsing File",
+        description: "Could not read or parse the selected JSON file.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Upload className="h-5 w-5" />
+          Bulk Import Representatives
+        </CardTitle>
+        <CardDescription>
+          Upload a JSON file to create or update representatives in bulk.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <Label htmlFor="jsonFile">Select JSON File</Label>
+          <Input
+            id="jsonFile"
+            type="file"
+            accept=".json"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+          />
+        </div>
+
+        <Button
+          onClick={handleFileUpload}
+          disabled={!selectedFile || bulkImportMutation.isLoading}
+          className="w-full"
+        >
+          {bulkImportMutation.isLoading
+            ? "Processing..."
+            : "Process Import File"}
+        </Button>
+
+        {processingResult && (
+          <Alert>
+            <div className="space-y-2">
+              <p className="font-medium">Processing Complete</p>
+              <div className="text-sm">
+                <p className="text-green-600">
+                  ✅ Created: {processingResult.createdCount}
+                </p>
+                <p className="text-blue-600">
+                  🔄 Updated: {processingResult.updatedCount}
+                </p>
+                <p className="text-red-600">
+                  ❌ Errors: {processingResult.errors.length}
+                </p>
+                {processingResult.errors.length > 0 && (
+                  <div className="mt-2 max-h-40 overflow-y-auto">
+                    <p className="font-medium">Error Details:</p>
+                    {processingResult.errors.map((error, i) => (
+                      <p key={i} className="text-red-600 text-xs">
+                        Code: {error.representativeCode} - Reason:{" "}
+                        {error.reason}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Phase 2 Components
+function JsonProcessingPanel() {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [processingResult, setProcessingResult] = useState<any>(null);
+  const queryClient = useQueryClient();
+
+  const processJsonMutation = useMutation(apiClient.processInvoiceJsonFile, {
+    onSuccess: (result) => {
+      setProcessingResult(result);
+      queryClient.invalidateQueries(["invoices"]);
+      queryClient.invalidateQueries(["dashboardStats"]);
+    },
+  });
+
+  const handleFileUpload = async () => {
+    if (!selectedFile) return;
+
+    try {
+      const fileContent = await selectedFile.text();
+      processJsonMutation.mutate({
+        fileContent,
+        fileName: selectedFile.name,
+      });
+    } catch (error) {
+      console.error("Error reading file:", error);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Upload className="h-5 w-5" />
+          JSON Invoice Processing
+        </CardTitle>
+        <CardDescription>
+          Upload JSON files to bulk process invoices with smart tier pricing
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <Label htmlFor="jsonFile">Select JSON File</Label>
+          <Input
+            id="jsonFile"
+            type="file"
+            accept=".json"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+          />
+        </div>
+
+        <Button
+          onClick={handleFileUpload}
+          disabled={!selectedFile || processJsonMutation.isLoading}
+          className="w-full"
+        >
+          {processJsonMutation.isLoading
+            ? "Processing..."
+            : "Process JSON File"}
+        </Button>
+
+        {processingResult && (
+          <Alert>
+            <div className="space-y-2">
+              <p className="font-medium">Processing Complete</p>
+              <div className="text-sm">
+                <p>✅ Processed: {processingResult.processedCount} invoices</p>
+                <p>❌ Errors: {processingResult.errorCount} records</p>
+                {processingResult.errors?.length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-medium">Errors:</p>
+                    {processingResult.errors
+                      .slice(0, 3)
+                      .map((error: any, i: number) => (
+                        <p key={i} className="text-red-600 text-xs">
+                          Record {error.recordIndex}: {error.error}
+                        </p>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Alert>
+        )}
+
+        <div className="text-xs text-muted-foreground">
+          <p className="font-medium">Expected JSON format:</p>
+          <pre className="bg-muted p-2 rounded mt-1">
+            {`[{
+  "representativeCode": "REP-001",
+  "items": [{
+    "tier": 6,
+    "quantity": 100,
+    "description": "Service description"
+  }],
+  "taxRate": 0.1,
+  "notes": "Optional notes"
+}]`}
+          </pre>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FinancialToolsPanel() {
+  const { data: invoices } = useQuery(["invoices"], apiClient.listInvoices);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
+  const [calculationResult, setCalculationResult] = useState<any>(null);
+
+  const calculateMutation = useMutation(apiClient.calculateAdvancedFinancials, {
+    onSuccess: (result) => {
+      setCalculationResult(result);
+    },
+  });
+
+  const handleCalculate = () => {
+    if (!selectedInvoiceId) return;
+    calculateMutation.mutate({
+      invoiceId: selectedInvoiceId,
+      applyDiscounts: true,
+      customTaxRate: 0.1,
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Calculator className="h-5 w-5" />
+          Advanced Financial Calculations
+        </CardTitle>
+        <CardDescription>
+          Calculate advanced financials with discounts, taxes, and commissions
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <Label htmlFor="invoice">Select Invoice</Label>
+          <Select
+            value={selectedInvoiceId}
+            onValueChange={setSelectedInvoiceId}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Choose an invoice" />
+            </SelectTrigger>
+            <SelectContent>
+              {invoices?.map((invoice) => (
+                <SelectItem key={invoice.id} value={invoice.id}>
+                  {invoice.invoiceNumber} -{" "}
+                  {invoice.representative.persianFullName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Button
+          onClick={handleCalculate}
+          disabled={!selectedInvoiceId || calculateMutation.isLoading}
+          className="w-full"
+        >
+          {calculateMutation.isLoading
+            ? "Calculating..."
+            : "Calculate Advanced Financials"}
+        </Button>
+
+        {calculationResult && (
+          <div className="space-y-3 p-4 bg-muted rounded-lg">
+            <h4 className="font-medium">Financial Breakdown</h4>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p>Subtotal: {calculationResult.subtotal.toLocaleString()} T</p>
+                <p>
+                  Discount: -{calculationResult.discountAmount.toLocaleString()}{" "}
+                  T
+                </p>
+                <p>
+                  Tax ({(calculationResult.taxRate * 100).toFixed(1)}%):{" "}
+                  {calculationResult.taxAmount.toLocaleString()} T
+                </p>
+              </div>
+              <div>
+                <p className="font-medium">
+                  Final Total: {calculationResult.finalTotal.toLocaleString()} T
+                </p>
+                <p>
+                  Commission:{" "}
+                  {calculationResult.commissionAmount.toLocaleString()} T
+                </p>
+                <p>
+                  Payment Terms: {calculationResult.recommendedPaymentTerms}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SmartWorkflowPanel() {
+  const { data: representatives } = useQuery(
+    ["representatives"],
+    apiClient.listRepresentatives,
+  );
+  const [workflowData, setWorkflowData] = useState({
+    representativeId: "",
+    serviceType: "",
+    volume: 0,
+    priority: "NORMAL" as "LOW" | "NORMAL" | "HIGH" | "URGENT",
+  });
+  const [workflowResult, setWorkflowResult] = useState<any>(null);
+
+  const smartWorkflowMutation = useMutation(
+    apiClient.processSmartInvoiceWorkflow,
+    {
+      onSuccess: (result) => {
+        setWorkflowResult(result);
+      },
+    },
+  );
+
+  const handleProcessWorkflow = () => {
+    if (!workflowData.representativeId || !workflowData.serviceType) return;
+    smartWorkflowMutation.mutate(workflowData);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Brain className="h-5 w-5" />
+          Smart Invoice Workflow
+        </CardTitle>
+        <CardDescription>
+          AI-powered pricing and workflow recommendations based on history and
+          volume
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="representative">Representative</Label>
+            <Select
+              value={workflowData.representativeId}
+              onValueChange={(value) =>
+                setWorkflowData({ ...workflowData, representativeId: value })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select representative" />
+              </SelectTrigger>
+              <SelectContent>
+                {representatives?.map((rep) => (
+                  <SelectItem key={rep.id} value={rep.id}>
+                    {rep.persianFullName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label htmlFor="serviceType">Service Type</Label>
+            <Input
+              id="serviceType"
+              value={workflowData.serviceType}
+              onChange={(e) =>
+                setWorkflowData({
+                  ...workflowData,
+                  serviceType: e.target.value,
+                })
+              }
+              placeholder="e.g., Cloud Hosting"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="volume">Volume</Label>
+            <Input
+              id="volume"
+              type="number"
+              value={workflowData.volume}
+              onChange={(e) =>
+                setWorkflowData({
+                  ...workflowData,
+                  volume: parseInt(e.target.value) || 0,
+                })
+              }
+              placeholder="e.g., 500"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="priority">Priority</Label>
+            <Select
+              value={workflowData.priority}
+              onValueChange={(value: any) =>
+                setWorkflowData({ ...workflowData, priority: value })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="LOW">Low</SelectItem>
+                <SelectItem value="NORMAL">Normal</SelectItem>
+                <SelectItem value="HIGH">High</SelectItem>
+                <SelectItem value="URGENT">Urgent</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <Button
+          onClick={handleProcessWorkflow}
+          disabled={
+            !workflowData.representativeId ||
+            !workflowData.serviceType ||
+            smartWorkflowMutation.isLoading
+          }
+          className="w-full"
+        >
+          {smartWorkflowMutation.isLoading
+            ? "Processing..."
+            : "Generate Smart Recommendations"}
+        </Button>
+
+        {workflowResult && (
+          <div className="space-y-4 p-4 bg-muted rounded-lg">
+            <div>
+              <h4 className="font-medium">Representative Analysis</h4>
+              <div className="text-sm space-y-1">
+                <p>
+                  Payment Reliability:{" "}
+                  {workflowResult.representativeInfo.paymentReliability}%
+                </p>
+                <p>
+                  Total Invoices:{" "}
+                  {workflowResult.representativeInfo.totalInvoices}
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-medium">Smart Recommendations</h4>
+              <div className="text-sm space-y-1">
+                <p>Recommended Tier: {workflowResult.recommendations.tier}</p>
+                <p>
+                  Unit Price:{" "}
+                  {workflowResult.recommendations.unitPrice.toLocaleString()} T
+                </p>
+                <p>
+                  Payment Terms: {workflowResult.recommendations.paymentTerms}
+                </p>
+                <p>
+                  Estimated Delivery:{" "}
+                  {workflowResult.recommendations.estimatedDelivery}
+                </p>
+              </div>
+            </div>
+
+            {Object.values(workflowResult.smartInsights).some(Boolean) && (
+              <div>
+                <h4 className="font-medium">Smart Insights</h4>
+                <div className="text-sm space-y-1">
+                  {workflowResult.smartInsights.volumeDiscount && (
+                    <p className="text-green-600">
+                      💡 {workflowResult.smartInsights.volumeDiscount}
+                    </p>
+                  )}
+                  {workflowResult.smartInsights.loyaltyBonus && (
+                    <p className="text-blue-600">
+                      ⭐ {workflowResult.smartInsights.loyaltyBonus}
+                    </p>
+                  )}
+                  {workflowResult.smartInsights.riskAlert && (
+                    <p className="text-red-600">
+                      ⚠️ {workflowResult.smartInsights.riskAlert}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// الزام ۳.۳: پروفایل نماینده با تب‌ها
+function RepresentativeProfilePage() {
+  const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: representative, isLoading } = useQuery(
+    ["representative", id],
+    () => apiClient.getRepresentativeProfile({ id: id! }),
+    { enabled: !!id },
+  );
+
+  const { data: salesCollaborators } = useQuery(
+    ["salesCollaborators"],
+    apiClient.listSalesCollaborators,
+  );
+
+  const { data: payments } = useQuery(
+    ["representativePayments", id],
+    () => apiClient.getRepresentativePayments({ representativeId: id! }),
+    { enabled: !!id },
+  );
+
+  const updateRepresentativeMutation = useMutation(
+    apiClient.updateRepresentativeProfile,
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(["representative", id]);
+        queryClient.invalidateQueries(["representatives"]);
+        toast({ title: "اطلاعات نماینده با موفقیت به‌روزرسانی شد" });
+      },
+      onError: (error: any) => {
+        toast({
+          title: "خطا در به‌روزرسانی",
+          description: error.message,
+          variant: "destructive",
+        });
+      },
+    },
+  );
+
+  const createPaymentMutation = useMutation(apiClient.createPayment, {
+    onSuccess: () => {
+      queryClient.invalidateQueries(["representativePayments", id]);
+      queryClient.invalidateQueries(["representative", id]);
+      toast({ title: "پرداخت با موفقیت ثبت شد" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "خطا در ثبت پرداخت",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const [editFormData, setEditFormData] = useState<any>(null);
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({
+    amount: 0,
+    paymentMethod: "BANK_TRANSFER",
+    referenceNumber: "",
+    description: "",
+  });
+
+  React.useEffect(() => {
+    if (representative && !editFormData) {
+      const contactInfo = representative.contactInfo
+        ? JSON.parse(representative.contactInfo)
+        : { phone: "", telegramId: "", address: "" };
+
+      setEditFormData({
+        persianFullName: representative.persianFullName,
+        contactInfo: JSON.stringify(contactInfo),
+        salesCollaboratorId: representative.salesCollaboratorId || "NONE",
+        isActive: representative.isActive,
+        price_tier1: representative.price_tier1,
+        price_tier2: representative.price_tier2,
+        price_tier3: representative.price_tier3,
+        price_tier4: representative.price_tier4,
+        price_tier5: representative.price_tier5,
+        price_tier6: representative.price_tier6,
+        price_tier7: representative.price_tier7,
+        price_tier8: representative.price_tier8,
+        price_tier9: representative.price_tier9,
+        price_tier10: representative.price_tier10,
+        price_tier11: representative.price_tier11,
+        price_tier12: representative.price_tier12,
+      });
+    }
+  }, [representative, editFormData]);
+
+  const handleUpdateRepresentative = () => {
+    if (!editFormData || !id) return;
+    const dataToSend = { ...editFormData };
+    if (dataToSend.salesCollaboratorId === "NONE") {
+      dataToSend.salesCollaboratorId = null;
+    }
+    updateRepresentativeMutation.mutate({ id, ...dataToSend });
+  };
+
+  const handleCreatePayment = () => {
+    if (!id) return;
+    createPaymentMutation.mutate({
+      representativeId: id,
+      ...paymentForm,
+    });
+    setShowPaymentDialog(false);
+    setPaymentForm({
+      amount: 0,
+      paymentMethod: "BANK_TRANSFER",
+      referenceNumber: "",
+      description: "",
+    });
+  };
+
+  // تعریف ستون‌های جدول فاکتورها
+  const invoiceColumns: ColumnDef<any>[] = [
+    {
+      accessorKey: "invoiceNumber",
+      header: "شماره فاکتور",
+      cell: ({ row }) => (
+        <div className="font-medium">{row.getValue("invoiceNumber")}</div>
+      ),
+    },
+    {
+      accessorKey: "issueDate",
+      header: "تاریخ صدور",
+      cell: ({ row }) => {
+        const date = row.getValue<string>("issueDate");
+        return new Date(date).toLocaleDateString("fa-IR");
+      },
+    },
+    {
+      accessorKey: "totalAmount",
+      header: "مبلغ کل",
+      cell: ({ row }) => (
+        <div className="font-medium">
+          {row.getValue<number>("totalAmount").toLocaleString()} تومان
+        </div>
+      ),
+    },
+    {
+      accessorKey: "status",
+      header: "وضعیت",
+      cell: ({ row }) => {
+        const status = row.getValue<string>("status");
+        return (
+          <Badge className={`invoice-status-${status.toLowerCase()}`}>
+            {status}
+          </Badge>
+        );
+      },
+    },
+  ];
+
+  // تعریف ستون‌های جدول پرداخت‌ها
+  const paymentColumns: ColumnDef<any>[] = [
+    {
+      accessorKey: "paymentDate",
+      header: "تاریخ پرداخت",
+      cell: ({ row }) => {
+        const date = row.getValue<string>("paymentDate");
+        return new Date(date).toLocaleDateString("fa-IR");
+      },
+    },
+    {
+      accessorKey: "amount",
+      header: "مبلغ",
+      cell: ({ row }) => (
+        <div className="font-medium">
+          {row.getValue<number>("amount").toLocaleString()} تومان
+        </div>
+      ),
+    },
+    {
+      accessorKey: "paymentMethod",
+      header: "روش پرداخت",
+      cell: ({ row }) => <div>{row.getValue("paymentMethod")}</div>,
+    },
+    {
+      accessorKey: "referenceNumber",
+      header: "شماره مرجع",
+      cell: ({ row }) => (
+        <div className="font-mono text-sm">
+          {row.getValue("referenceNumber") || "—"}
+        </div>
+      ),
+    },
+  ];
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (!representative) {
+    return (
+      <div className="text-center py-12">
+        <h2 className="text-2xl font-bold text-muted-foreground">
+          نماینده یافت نشد
+        </h2>
+      </div>
+    );
+  }
+
+  const contactInfo: { phone?: string; telegramId?: string; address?: string } =
+    representative.contactInfo
+      ? (JSON.parse(representative.contactInfo) as {
+          phone?: string;
+          telegramId?: string;
+          address?: string;
+        })
+      : { phone: "", telegramId: "", address: "" };
+
+  return (
+    <div className="space-y-6">
+      {/* هدر پروفایل */}
+      <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-xl p-6 border border-primary/20">
+        <div className="flex items-start justify-between">
+          <div className="space-y-2">
+            <h1 className="text-3xl font-bold phoenix-gradient-text">
+              {representative.persianFullName}
+            </h1>
+            <p className="text-lg text-muted-foreground font-mono">
+              {representative.representativeCode}
+            </p>
+            <div className="flex items-center gap-4 mt-4">
+              <Badge
+                className={
+                  representative.isActive ? "status-success" : "status-error"
+                }
+              >
+                {representative.isActive ? "فعال" : "غیرفعال"}
+              </Badge>
+              {representative.salesCollaborator && (
+                <div className="flex items-center gap-2 text-sm">
+                  <User className="h-4 w-4" />
+                  <span>
+                    همکار فروش: {representative.salesCollaborator.name}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="text-left">
+            <div className="text-sm text-muted-foreground">موجودی فعلی</div>
+            <div
+              className={`text-2xl font-bold ${
+                representative.balance >= 0 ? "text-green-600" : "text-red-600"
+              }`}
+            >
+              {representative.balance.toLocaleString()} تومان
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* آمار سریع */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard
+          title="کل بدهی"
+          value={`${representative.statistics?.totalDebt?.toLocaleString() || "0"} تومان`}
+          icon={<AlertCircle className="h-4 w-4" />}
+          description="مبلغ بدهی معوق"
+        />
+        <StatCard
+          title="کل فروش"
+          value={`${representative.statistics?.totalSales?.toLocaleString() || "0"} تومان`}
+          icon={<TrendingUp className="h-4 w-4" />}
+          description="مجموع فروش کل"
+        />
+        <StatCard
+          title="فاکتورهای پرداخت شده"
+          value={representative.statistics?.paidInvoices || 0}
+          icon={<CheckCircle className="h-4 w-4" />}
+          description={`از ${representative.statistics?.totalInvoices || 0} فاکتور کل`}
+        />
+        <StatCard
+          title="قابلیت اعتماد"
+          value={`${representative.statistics?.paymentReliability || 0}%`}
+          icon={<CreditCard className="h-4 w-4" />}
+          description="درصد پرداخت به موقع"
+        />
+      </div>
+
+      {/* تب‌ها */}
+      <Tabs defaultValue="overview" className="space-y-6">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="overview">نمای کلی و تعرفه‌ها</TabsTrigger>
+          <TabsTrigger value="invoices">تاریخچه فاکتورها</TabsTrigger>
+          <TabsTrigger value="payments">تاریخچه پرداخت‌ها</TabsTrigger>
+        </TabsList>
+
+        {/* Tab 1: نمای کلی و تعرفه‌ها */}
+        <TabsContent value="overview" className="space-y-6">
+          <Card className="obsidian-card">
+            <CardHeader>
+              <CardTitle>ویرایش اطلاعات نماینده</CardTitle>
+              <CardDescription>
+                اطلاعات پایه، تماس و تعرفه‌های اختصاصی نماینده
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {editFormData && (
+                <>
+                  {/* اطلاعات پایه */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="persianFullName">نام کامل فارسی</Label>
+                      <Input
+                        id="persianFullName"
+                        value={editFormData.persianFullName}
+                        onChange={(e) =>
+                          setEditFormData({
+                            ...editFormData,
+                            persianFullName: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="salesCollaborator">همکار فروش</Label>
+                      <Select
+                        value={editFormData.salesCollaboratorId}
+                        onValueChange={(value) =>
+                          setEditFormData({
+                            ...editFormData,
+                            salesCollaboratorId: value,
+                          })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="انتخاب همکار فروش" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="NONE">بدون همکار فروش</SelectItem>
+                          {salesCollaborators?.map((collaborator) => (
+                            <SelectItem
+                              key={collaborator.id}
+                              value={collaborator.id}
+                            >
+                              {collaborator.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* اطلاعات تماس */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">اطلاعات تماس</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <Label htmlFor="phone">شماره تلفن</Label>
+                        <Input
+                          id="phone"
+                          value={contactInfo.phone || ""}
+                          onChange={(e) => {
+                            const newContactInfo = {
+                              ...contactInfo,
+                              phone: e.target.value,
+                            };
+                            setEditFormData({
+                              ...editFormData,
+                              contactInfo: JSON.stringify(newContactInfo),
+                            });
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="telegramId">آی‌دی عددی تلگرام</Label>
+                        <Input
+                          id="telegramId"
+                          value={contactInfo.telegramId || ""}
+                          onChange={(e) => {
+                            const newContactInfo = {
+                              ...contactInfo,
+                              telegramId: e.target.value,
+                            };
+                            setEditFormData({
+                              ...editFormData,
+                              contactInfo: JSON.stringify(newContactInfo),
+                            });
+                          }}
+                        />
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <SwitchComponent
+                          id="isActive"
+                          checked={editFormData.isActive}
+                          onCheckedChange={(checked) =>
+                            setEditFormData({
+                              ...editFormData,
+                              isActive: checked,
+                            })
+                          }
+                        />
+                        <Label htmlFor="isActive">نماینده فعال</Label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* تعرفه‌های ۱۲ سطحی */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">
+                      تعرفه‌های اختصاصی (۱۲ سطح)
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {/* سرویس‌های محدود (تیر ۱-۶) */}
+                      <div className="col-span-full">
+                        <h4 className="font-medium text-primary mb-3">
+                          سرویس‌های حجمی محدود (تومان به ازای هر گیگابایت)
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {[1, 2, 3, 4, 5, 6].map((tier) => (
+                            <div key={tier}>
+                              <Label htmlFor={`tier${tier}`}>
+                                تیر {tier} - سرویس حجمی {tier} ماهه
+                              </Label>
+                              <Input
+                                id={`tier${tier}`}
+                                type="number"
+                                value={editFormData[`price_tier${tier}`]}
+                                onChange={(e) =>
+                                  setEditFormData({
+                                    ...editFormData,
+                                    [`price_tier${tier}`]:
+                                      parseInt(e.target.value) || 0,
+                                  })
+                                }
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* سرویس‌های نامحدود (تیر ۷-۱۲) */}
+                      <div className="col-span-full">
+                        <h4 className="font-medium text-primary mb-3">
+                          سرویس‌های نامحدود (تومان به ازای هر ماه)
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {[7, 8, 9, 10, 11, 12].map((tier) => (
+                            <div key={tier}>
+                              <Label htmlFor={`tier${tier}`}>
+                                تیر {tier} - سرویس نامحدود {tier - 6} ماهه
+                              </Label>
+                              <Input
+                                id={`tier${tier}`}
+                                type="number"
+                                value={editFormData[`price_tier${tier}`]}
+                                onChange={(e) =>
+                                  setEditFormData({
+                                    ...editFormData,
+                                    [`price_tier${tier}`]:
+                                      parseInt(e.target.value) || 0,
+                                  })
+                                }
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={handleUpdateRepresentative}
+                    disabled={updateRepresentativeMutation.isLoading}
+                    className="w-full phoenix-gradient"
+                  >
+                    {updateRepresentativeMutation.isLoading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        در حال به‌روزرسانی...
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Save className="h-4 w-4" />
+                        ذخیره تغییرات
+                      </div>
+                    )}
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 2: تاریخچه فاکتورها */}
+        <TabsContent value="invoices">
+          <Card className="obsidian-card">
+            <CardHeader>
+              <CardTitle>تاریخچه فاکتورها</CardTitle>
+              <CardDescription>
+                تمام فاکتورهای مربوط به این نماینده
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DataTable
+                columns={invoiceColumns}
+                data={representative.invoices || []}
+                searchPlaceholder="جستجو در فاکتورها..."
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 3: تاریخچه پرداخت‌ها */}
+        <TabsContent value="payments">
+          <Card className="obsidian-card">
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>تاریخچه پرداخت‌ها</CardTitle>
+                  <CardDescription>
+                    تمام پرداخت‌های ثبت شده برای این نماینده
+                  </CardDescription>
+                </div>
+                <Dialog
+                  open={showPaymentDialog}
+                  onOpenChange={setShowPaymentDialog}
+                >
+                  <DialogTrigger asChild>
+                    <Button className="phoenix-gradient">
+                      <Plus className="h-4 w-4 ml-2" />
+                      ثبت پرداخت جدید
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>ثبت پرداخت جدید</DialogTitle>
+                      <DialogDescription>
+                        ثبت پرداخت جدید برای {representative.persianFullName}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div>
+                        <Label htmlFor="amount">مبلغ (تومان)</Label>
+                        <Input
+                          id="amount"
+                          type="number"
+                          value={paymentForm.amount}
+                          onChange={(e) =>
+                            setPaymentForm({
+                              ...paymentForm,
+                              amount: parseFloat(e.target.value) || 0,
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="paymentMethod">روش پرداخت</Label>
+                        <Select
+                          value={paymentForm.paymentMethod}
+                          onValueChange={(value) =>
+                            setPaymentForm({
+                              ...paymentForm,
+                              paymentMethod: value,
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="BANK_TRANSFER">
+                              انتقال بانکی
+                            </SelectItem>
+                            <SelectItem value="CASH">نقدی</SelectItem>
+                            <SelectItem value="CHEQUE">چک</SelectItem>
+                            <SelectItem value="CREDIT_CARD">
+                              کارت اعتباری
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="referenceNumber">شماره مرجع</Label>
+                        <Input
+                          id="referenceNumber"
+                          value={paymentForm.referenceNumber}
+                          onChange={(e) =>
+                            setPaymentForm({
+                              ...paymentForm,
+                              referenceNumber: e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="description">توضیحات</Label>
+                        <Textarea
+                          id="description"
+                          value={paymentForm.description}
+                          onChange={(e) =>
+                            setPaymentForm({
+                              ...paymentForm,
+                              description: e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        onClick={handleCreatePayment}
+                        disabled={
+                          createPaymentMutation.isLoading ||
+                          paymentForm.amount <= 0
+                        }
+                        className="w-full"
+                      >
+                        {createPaymentMutation.isLoading
+                          ? "در حال ثبت..."
+                          : "ثبت پرداخت"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <DataTable
+                columns={paymentColumns}
+                data={payments || []}
+                searchPlaceholder="جستجو در پرداخت‌ها..."
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// پنل مدیریت تلگرام
+function TelegramManagementPanel() {
+  const { data: telegramStats, refetch: refetchStats } = useQuery(
+    ["telegramStats"],
+    apiClient.getTelegramDispatchStats,
+  );
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+
+  const { data: jobStatus } = useQuery(
+    ["bulkDispatchStatus", activeJobId],
+    () => apiClient.getBulkDispatchStatus({ taskId: activeJobId! }),
+    {
+      enabled: !!activeJobId,
+      refetchInterval: (data: any) =>
+        data?.status === "RUNNING" ? 5000 : false,
+      onSuccess: (data) => {
+        if (data?.status === "COMPLETED" || data?.status === "FAILED") {
+          toast({
+            title: `ارسال دسته‌جمعی ${
+              data.status === "COMPLETED" ? "کامل شد" : "ناموفق بود"
+            }.`,
+            description:
+              data.status === "FAILED"
+                ? `Error: ${(data.error as any)?.message || "Unknown error"}`
+                : "تمام فاکتورهای در انتظار پردازش شدند.",
+            variant: data.status === "FAILED" ? "destructive" : "default",
+          });
+          void refetchStats();
+          void queryClient.invalidateQueries(["invoices"]);
+          setActiveJobId(null);
+        }
+      },
+    },
+  );
+
+  const bulkDispatchMutation = useMutation(
+    apiClient.bulkDispatchInvoicesToTelegram,
+    {
+      onSuccess: (task) => {
+        if (task.id) {
+          setActiveJobId(task.id);
+          toast({
+            title: "ارسال دسته‌جمعی آغاز شد",
+            description: `فرایند با شناسه ${task.id} شروع شد.`,
+          });
+          void refetchStats();
+        } else {
+          toast({
+            title: "خطا",
+            description: "شناسه تسک دریافت نشد.",
+            variant: "destructive",
+          });
+        }
+      },
+      onError: (error: any) => {
+        toast({
+          title: "خطا در شروع ارسال دسته‌جمعی",
+          description: error.message,
+          variant: "destructive",
+        });
+      },
+    },
+  );
+
+  const isLoading =
+    bulkDispatchMutation.isLoading ||
+    (jobStatus && jobStatus.status === "RUNNING");
+
+  return (
+    <div className="space-y-6">
+      {/* آمار تلگرام */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard
+          title="کل فاکتورها"
+          value={telegramStats?.totalInvoices || 0}
+          icon={<FileText className="h-4 w-4" />}
+          description="تعداد کل فاکتورها"
+        />
+        <StatCard
+          title="ارسال شده"
+          value={telegramStats?.sentInvoices || 0}
+          icon={<CheckCircle className="h-4 w-4" />}
+          description="فاکتورهای ارسال شده"
+        />
+        <StatCard
+          title="ناموفق"
+          value={telegramStats?.failedInvoices || 0}
+          icon={<AlertCircle className="h-4 w-4" />}
+          description="ارسال‌های ناموفق"
+        />
+        <StatCard
+          title="در انتظار"
+          value={telegramStats?.pendingInvoices || 0}
+          icon={<Clock className="h-4 w-4" />}
+          description="در انتظار ارسال"
+        />
+      </div>
+
+      {/* کنترل‌های ارسال */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageCircle className="h-5 w-5" />
+            مدیریت ارسال تلگرام
+          </CardTitle>
+          <CardDescription>ارسال فاکتورها به تلگرام نمایندگان</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+            <div>
+              <h4 className="font-medium">ارسال دسته‌جمعی</h4>
+              <p className="text-sm text-muted-foreground">
+                ارسال تمام فاکتورهای در انتظار به تلگرام
+              </p>
+            </div>
+            <Button
+              onClick={() => bulkDispatchMutation.mutate()}
+              disabled={isLoading || !telegramStats?.pendingInvoices}
+              className="phoenix-gradient w-[200px]"
+            >
+              {isLoading ? (
+                <div className="flex items-center gap-2">
+                  <Loader className="h-4 w-4 animate-spin" />
+                  در حال ارسال...
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Send className="h-4 w-4" />
+                  ارسال {telegramStats?.pendingInvoices || 0} فاکتور
+                </div>
+              )}
+            </Button>
+          </div>
+
+          {telegramStats && (
+            <div className="p-4 bg-muted rounded-lg">
+              <h4 className="font-medium mb-2">آمار ارسال</h4>
+              <div className="text-sm space-y-1">
+                <p>نرخ موفقیت: {telegramStats.successRate}%</p>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-green-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${telegramStats.successRate}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <Alert>
+            <MessageCircle className="h-4 w-4" />
+            <div>
+              <p className="font-medium">نکات مهم:</p>
+              <ul className="text-sm mt-1 space-y-1">
+                <li>
+                  • اطمینان حاصل کنید که متغیر محیطی TELEGRAM_BOT_TOKEN تنظیم
+                  شده است
+                </li>
+                <li>• نمایندگان باید آی‌دی عددی تلگرام داشته باشند</li>
+                <li>
+                  • ارسال دسته‌جمعی با فاصله ۲ ثانیه بین هر ارسال انجام می‌شود
+                </li>
+              </ul>
+            </div>
+          </Alert>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function CollaboratorsPage() {
+  const { data: collaborators } = useQuery(
+    ["collaborators"],
+    apiClient.listCollaborators,
+  );
+  const queryClient = useQueryClient();
+  const [showDialog, setShowDialog] = useState(false);
+  const [editCollaborator, setEditCollaborator] = useState<any>(null);
+  const { toast } = useToast();
+
+  // فرم افزودن/ویرایش
+  function CollaboratorForm({
+    initialData,
+    onSuccess,
+    onCancel,
+  }: {
+    initialData?: any;
+    onSuccess: () => void;
+    onCancel: () => void;
+  }) {
+    const queryClient = useQueryClient();
+    const { toast } = useToast();
+    const isEdit = !!initialData;
+
+    const collaboratorSchema = z.object({
+      name: z.string().min(3, "نام باید حداقل ۳ کاراکتر باشد"),
+      city: z.string().optional(),
+      phone: z.string().optional(),
+      telegramId: z.string().optional(),
+      commissionRate: z.coerce
+        .number()
+        .min(0, "درصد باید بین ۰ و ۱۰۰ باشد")
+        .max(100, "درصد باید بین ۰ و ۱۰۰ باشد"),
+    });
+
+    type CollaboratorFormData = z.infer<typeof collaboratorSchema>;
+
+    const {
+      register,
+      handleSubmit,
+      formState: { errors },
+    } = useForm<CollaboratorFormData>({
+      resolver: zodResolver(collaboratorSchema),
+      defaultValues: initialData
+        ? {
+            ...initialData,
+            commissionRate: initialData.commissionRate || 0,
+          }
+        : {
+            name: "",
+            city: "",
+            phone: "",
+            telegramId: "",
+            commissionRate: 0,
+          },
+    });
+
+    const createMutation = useMutation(apiClient.createCollaborator, {
+      onSuccess: () => {
+        queryClient.invalidateQueries(["collaborators"]);
+        toast({ title: "همکار جدید با موفقیت اضافه شد" });
+        onSuccess();
+      },
+      onError: (error: any) => {
+        toast({
+          title: "خطا در ایجاد همکار",
+          description: error.message,
+          variant: "destructive",
+        });
+      },
+    });
+
+    const updateMutation = useMutation(apiClient.updateCollaborator, {
+      onSuccess: () => {
+        queryClient.invalidateQueries(["collaborators"]);
+        toast({ title: "اطلاعات همکار با موفقیت ویرایش شد" });
+        onSuccess();
+      },
+      onError: (error: any) => {
+        toast({
+          title: "خطا در ویرایش",
+          description: error.message,
+          variant: "destructive",
+        });
+      },
+    });
+
+    const onSubmit = (data: CollaboratorFormData) => {
+      if (isEdit) {
+        updateMutation.mutate({ id: initialData.id, ...data });
+      } else {
+        createMutation.mutate(data);
+      }
+    };
+
+    return (
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <DialogHeader>
+          <DialogTitle>
+            {isEdit ? "ویرایش همکار فروش" : "افزودن همکار جدید"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="name">نام *</Label>
+            <Input id="name" {...register("name")} />
+            {errors.name && (
+              <div className="text-xs text-red-600 mt-1">
+                {errors.name.message}
+              </div>
+            )}
+          </div>
+          <div>
+            <Label htmlFor="city">شهر</Label>
+            <Input id="city" {...register("city")} />
+          </div>
+          <div>
+            <Label htmlFor="phone">شماره تلفن</Label>
+            <Input id="phone" {...register("phone")} />
+          </div>
+          <div>
+            <Label htmlFor="telegramId">آی‌دی تلگرام</Label>
+            <Input id="telegramId" {...register("telegramId")} />
+          </div>
+          <div className="md:col-span-2">
+            <Label htmlFor="commissionRate">درصد پورسانت *</Label>
+            <Input
+              id="commissionRate"
+              type="number"
+              {...register("commissionRate")}
+            />
+            {errors.commissionRate && (
+              <div className="text-xs text-red-600 mt-1">
+                {errors.commissionRate.message}
+              </div>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            type="submit"
+            disabled={updateMutation.isLoading || createMutation.isLoading}
+            className="w-full"
+          >
+            {updateMutation.isLoading || createMutation.isLoading
+              ? "در حال ثبت..."
+              : isEdit
+                ? "ذخیره تغییرات"
+                : "ثبت همکار"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            className="w-full mt-2 md:mt-0"
+          >
+            انصراف
+          </Button>
+        </DialogFooter>
+      </form>
+    );
+  }
+
+  // حذف همکار
+  const deleteMutation = useMutation(apiClient.deleteCollaborator, {
+    onSuccess: () => {
+      queryClient.invalidateQueries(["collaborators"]);
+      toast({ title: "همکار حذف شد" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "خطا در حذف",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const columns: ColumnDef<any>[] = [
+    {
+      accessorKey: "name",
+      header: "نام",
+      cell: ({ row }) => (
+        <div className="font-medium">{row.getValue("name")}</div>
+      ),
+    },
+    { accessorKey: "city", header: "شهر" },
+    {
+      accessorKey: "commissionRate",
+      header: "درصد پورسانت",
+      cell: ({ row }) => <>{row.getValue("commissionRate")}%</>,
+    },
+    {
+      accessorKey: "_count.representatives",
+      header: "تعداد نمایندگان",
+      cell: ({ row }) => row.original._count?.representatives ?? 0,
+    },
+    {
+      id: "actions",
+      header: "عملیات",
+      cell: ({ row }) => (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setEditCollaborator(row.original);
+              setShowDialog(true);
+            }}
+          >
+            ویرایش
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => deleteMutation.mutate({ id: row.original.id })}
+          >
+            حذف
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="مدیریت همکاران فروش"
+        description="افزودن، ویرایش و حذف همکاران فروش"
+      >
+        <Button
+          onClick={() => {
+            setEditCollaborator(null);
+            setShowDialog(true);
+          }}
+        >
+          <Plus className="h-4 w-4 ml-2" /> افزودن همکار جدید
+        </Button>
+      </PageHeader>
+      <Card className="obsidian-card">
+        <CardContent>
+          <DataTable
+            columns={columns}
+            data={collaborators || []}
+            searchPlaceholder="جستجو در همکاران..."
+          />
+        </CardContent>
+      </Card>
+      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+        <DialogContent>
+          <CollaboratorForm
+            initialData={editCollaborator}
+            onSuccess={() => setShowDialog(false)}
+            onCancel={() => setShowDialog(false)}
+          />
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Router>
+      <AuthGuard>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/invoices" element={<InvoicesPage />} />
+            <Route path="/representatives" element={<RepresentativesPage />} />
+            <Route
+              path="/representatives/:id"
+              element={<RepresentativeProfilePage />}
+            />
+            <Route path="/collaborators" element={<CollaboratorsPage />} />
+            <Route path="/admin" element={<AdminPage />} />
+          </Routes>
+        </Layout>
+      </AuthGuard>
+    </Router>
+  );
+}

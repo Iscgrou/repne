@@ -1,0 +1,180 @@
+// --- SQLite-Compatible Schema ---
+// Note: SQLite doesn't support enums, so we use String fields with default values
+// --- MODELS ---
+
+model User {
+  id        String   @id // will be auto-synced (same value returned by getAuth)
+  name      String? // will be auto-synced for every user
+  image     String? // will be auto-synced for every user
+  handle    String? // will be auto-synced for every user
+  isAdmin   Boolean  @default(false) // must be manually managed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SalesCollaborator {
+  id                String             @id @default(cuid())
+  name              String             @unique
+  commissionRate    Float              @default(0) // درصد پورسانت، مثلاً 10 برای 10%
+  balance           Float              @default(0) // موجودی قابل تسویه به تومان (stored as Float)
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  representatives   Representative[]
+  commissionRecords CommissionRecord[]
+  commissionPayouts CommissionPayout[]
+}
+
+model Representative {
+  id                  String             @id @default(cuid())
+  representativeCode  String             @unique // کلید شناسایی اصلی برای تطبیق با فایل JSON
+  persianFullName     String
+  contactInfo         String? // JSON serialized: { phone: string, telegramId: string, address: string }
+  balance             Float              @default(0) // موجودی نماینده (منفی = بدهکار، مثبت = بستانکار)
+  isActive            Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  salesCollaboratorId String?
+  salesCollaborator   SalesCollaborator? @relation(fields: [salesCollaboratorId], references: [id], onDelete: SetNull)
+  // تعرفه‌های اختصاصی برای 12 سطح سرویس. این قلب محاسبات مالی است.
+  price_tier1         Int                @default(0)
+  price_tier2         Int                @default(0)
+  price_tier3         Int                @default(0)
+  price_tier4         Int                @default(0)
+  price_tier5         Int                @default(0)
+  price_tier6         Int                @default(0)
+  price_tier7         Int                @default(0)
+  price_tier8         Int                @default(0)
+  price_tier9         Int                @default(0)
+  price_tier10        Int                @default(0)
+  price_tier11        Int                @default(0)
+  price_tier12        Int                @default(0)
+  invoices            Invoice[]
+  payments            Payment[]
+  crmInteractions     CrmInteraction[]
+}
+
+model Invoice {
+  id                       String              @id @default(cuid())
+  invoiceNumber            String              @unique
+  representativeId         String
+  issueDate                DateTime            @default(now())
+  dueDate                  DateTime?
+  totalAmount              Float // Stored as Float (in Toman)
+  paidAmount               Float               @default(0) // Stored as Float (in Toman)
+  status                   String              @default("DRAFT") // PENDING_PAYMENT, PARTIALLY_PAID, PAID, CANCELLED, DRAFT
+  notes                    String?
+  cancellationReason       String?
+  // ستون حیاتی برای حسابرسی: یک کپی کامل از رکورد JSON ورودی که این فاکتور را تولید کرده است.
+  source_data_snapshot     String? // JSON serialized string
+  // ستون حیاتی برای ردیابی ارسال تلگرام
+  telegram_dispatch_status String? // JSON serialized: { status: "pending" | "sent" | "failed", sentAt?: DateTime, messageId?: String, errorMessage?: String }
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+  representative           Representative      @relation(fields: [representativeId], references: [id], onDelete: Cascade)
+  items                    InvoiceItem[]
+  paymentAllocations       PaymentAllocation[]
+  commissionRecord         CommissionRecord?
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Float // می‌تواند برای حجم (GB) یا تعداد باشد
+  unitPrice   Int // قیمت هر واحد به تومان
+  total       Int // قیمت کل این آیتم به تومان (quantity * unitPrice)
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id               String              @id @default(cuid())
+  representativeId String
+  amount           Float // Stored as Float (in Toman)
+  paymentDate      DateTime            @default(now())
+  paymentMethod    String // CASH, BANK_TRANSFER, CHEQUE, CREDIT_CARD, DIGITAL_WALLET
+  referenceNumber  String? // شماره مرجع تراکنش
+  description      String?
+  isConfirmed      Boolean             @default(false)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  representative   Representative      @relation(fields: [representativeId], references: [id], onDelete: Cascade)
+  allocations      PaymentAllocation[]
+
+  @@index([representativeId])
+  @@index([paymentDate])
+}
+
+model PaymentAllocation {
+  id        String   @id @default(cuid())
+  paymentId String
+  invoiceId String
+  amount    Float // مبلغ تخصیص یافته از پرداخت به این فاکتور (in Toman)
+  createdAt DateTime @default(now())
+  payment   Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, invoiceId])
+  @@index([paymentId])
+  @@index([invoiceId])
+}
+
+model CommissionRecord {
+  id                  String            @id @default(cuid())
+  invoiceId           String            @unique
+  salesCollaboratorId String
+  commissionAmount    Float // Stored as Float (in Toman)
+  commissionRate      Float // درصد پورسانت در زمان ایجاد فاکتور
+  status              String            @default("PENDING") // PENDING, PAID, CANCELLED
+  calculatedAt        DateTime          @default(now())
+  paidAt              DateTime?
+  notes               String?
+  invoice             Invoice           @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  salesCollaborator   SalesCollaborator @relation(fields: [salesCollaboratorId], references: [id], onDelete: Cascade)
+
+  @@index([salesCollaboratorId])
+  @@index([status])
+}
+
+model CommissionPayout {
+  id                  String            @id @default(cuid())
+  salesCollaboratorId String
+  amount              Float // Stored as Float (in Toman)
+  payoutDate          DateTime          @default(now())
+  description         String?
+  referenceNumber     String?
+  createdAt           DateTime          @default(now())
+  salesCollaborator   SalesCollaborator @relation(fields: [salesCollaboratorId], references: [id], onDelete: Cascade)
+
+  @@index([salesCollaboratorId])
+  @@index([payoutDate])
+}
+
+model CrmInteraction {
+  id               String         @id @default(cuid())
+  representativeId String
+  interactionType  String // CALL, EMAIL, TELEGRAM, MEETING, NOTE
+  subject          String
+  description      String?
+  interactionDate  DateTime       @default(now())
+  followUpDate     DateTime?
+  isCompleted      Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  representative   Representative @relation(fields: [representativeId], references: [id], onDelete: Cascade)
+
+  @@index([representativeId])
+  @@index([interactionDate])
+  @@index([followUpDate])
+}
+
+model SystemConfig {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

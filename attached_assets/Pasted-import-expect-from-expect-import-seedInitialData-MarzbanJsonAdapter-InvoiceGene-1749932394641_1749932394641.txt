@@ -1,0 +1,309 @@
+import { expect } from "expect";
+import { 
+  _seedInitialData, 
+  MarzbanJsonAdapter, 
+  InvoiceGenerationService,
+  createCollaborator,
+  deleteCollaborator,
+  createRepresentative,
+  deleteRepresentative,
+  processMarzbanJsonFile,
+  createCommissionPayout,
+  getInvoice,
+  getRepresentativeProfile,
+  getSalesCollaboratorProfile,
+  listCommissionRecords,
+  type StandardizedActivityRecord,
+  type RawMarzbanRecord 
+} from "./api";
+
+// Unit Test: MarzbanJsonAdapter.transform
+async function testMarzbanJsonAdapterTransform() {
+  // Sample JSON data matching Marzban structure
+  const sampleMarzbanJson = [
+    {
+      type: "table",
+      name: "a",
+      data: [
+        {
+          admin_username: "TEST-REP-001",
+          limited_1_month_volume: "100.5",
+          limited_2_month_volume: "200.0",
+          limited_3_month_volume: "150.75",
+          limited_4_month_volume: "50.0",
+          limited_5_month_volume: "0",
+          limited_6_month_volume: "300.25",
+          unlimited_1_month: "2",
+          unlimited_2_month: "1",
+          unlimited_3_month: "0",
+          unlimited_4_month: "3",
+          unlimited_5_month: "1",
+          unlimited_6_month: "0"
+        },
+        {
+          admin_username: "TEST-REP-002",
+          limited_1_month_volume: "75.0",
+          limited_2_month_volume: "0",
+          limited_3_month_volume: "125.5",
+          limited_4_month_volume: "0",
+          limited_5_month_volume: "200.0",
+          limited_6_month_volume: "0",
+          unlimited_1_month: "1",
+          unlimited_2_month: "0",
+          unlimited_3_month: "2",
+          unlimited_4_month: "0",
+          unlimited_5_month: "0",
+          unlimited_6_month: "1"
+        },
+        {
+          // Invalid record without admin_username
+          limited_1_month_volume: "50.0"
+        }
+      ]
+    }
+  ];
+
+  // Test validation
+  const isValid = MarzbanJsonAdapter.validateJsonStructure(sampleMarzbanJson);
+  expect(isValid).toBe(true);
+
+  // Test transformation
+  const result = MarzbanJsonAdapter.transform(sampleMarzbanJson);
+  
+  // Should return 2 valid records (3rd one is invalid)
+  expect(result).toHaveLength(2);
+  
+  // Test first record transformation
+  const firstRecord = result[0];
+  expect(firstRecord.representativeIdentifier).toBe("TEST-REP-001");
+  expect(firstRecord.usageData.tier1_Volume).toBe(100.5);
+  expect(firstRecord.usageData.tier2_Volume).toBe(200.0);
+  expect(firstRecord.usageData.tier3_Volume).toBe(150.75);
+  expect(firstRecord.usageData.tier4_Volume).toBe(50.0);
+  expect(firstRecord.usageData.tier5_Volume).toBe(0);
+  expect(firstRecord.usageData.tier6_Volume).toBe(300.25);
+  expect(firstRecord.usageData.tier7_Volume).toBe(2);
+  expect(firstRecord.usageData.tier8_Volume).toBe(1);
+  expect(firstRecord.usageData.tier9_Volume).toBe(0);
+  expect(firstRecord.usageData.tier10_Volume).toBe(3);
+  expect(firstRecord.usageData.tier11_Volume).toBe(1);
+  expect(firstRecord.usageData.tier12_Volume).toBe(0);
+  expect(firstRecord.rawRecord).toEqual(sampleMarzbanJson[0].data[0]);
+
+  // Test second record
+  const secondRecord = result[1];
+  expect(secondRecord.representativeIdentifier).toBe("TEST-REP-002");
+  expect(secondRecord.usageData.tier1_Volume).toBe(75.0);
+  expect(secondRecord.usageData.tier12_Volume).toBe(1);
+}
+
+// Integration Test: InvoiceGenerationService.generateInvoicesFromActivityData
+async function testInvoiceGenerationServiceIntegration() {
+  // Create test activity records
+  const testActivityRecords: StandardizedActivityRecord[] = [
+    {
+      representativeIdentifier: "TEST-REP-001",
+      representativeDetails: {
+        persianFullName: "نماینده تست",
+        contact: { mobile: "09123456789", email: null }
+      },
+      usageData: {
+        tier1_Volume: 100, // 100 * 1500 = 150,000
+        tier2_Volume: 0,
+        tier3_Volume: 0,
+        tier4_Volume: 0,
+        tier5_Volume: 0,
+        tier6_Volume: 0,
+        tier7_Volume: 2, // 2 * 50,000 = 100,000
+        tier8_Volume: 0,
+        tier9_Volume: 0,
+        tier10_Volume: 0,
+        tier11_Volume: 0,
+        tier12_Volume: 0,
+        discountAmount: 0,
+        additionalFee: 0
+      },
+      rawRecord: {
+        admin_username: "TEST-REP-001",
+        limited_1_month_volume: "100",
+        limited_2_month_volume: "0",
+        limited_3_month_volume: "0",
+        limited_4_month_volume: "0",
+        limited_5_month_volume: "0",
+        limited_6_month_volume: "0",
+        unlimited_1_month: "2",
+        unlimited_2_month: "0",
+        unlimited_3_month: "0",
+        unlimited_4_month: "0",
+        unlimited_5_month: "0",
+        unlimited_6_month: "0"
+      } as RawMarzbanRecord
+    }
+  ];
+
+  // Run the invoice generation service
+  const processingReport = await InvoiceGenerationService.generateInvoicesFromActivityData(testActivityRecords);
+
+  // Verify processing report structure
+  expect(processingReport).toHaveProperty("totalRecords");
+  expect(processingReport).toHaveProperty("successCount");
+  expect(processingReport).toHaveProperty("errors");
+  expect(processingReport).toHaveProperty("newlyOnboarded");
+  expect(processingReport).toHaveProperty("skippedInactive");
+  
+  // Verify basic processing logic
+  expect(processingReport.totalRecords).toBe(1);
+  expect(Array.isArray(processingReport.errors)).toBe(true);
+  expect(Array.isArray(processingReport.newlyOnboarded)).toBe(true);
+  expect(typeof processingReport.successCount).toBe("number");
+  expect(typeof processingReport.skippedInactive).toBe("number");
+}
+
+// Integration Test: Full financial cycle from invoice to payout
+async function testFullFinancialCycle() {
+  let collaboratorId: string | undefined;
+  let representativeId: string | undefined;
+  let invoiceId: string | undefined;
+
+  try {
+    // 1. Setup: Create a SalesCollaborator and a Representative
+    const collaborator = await createCollaborator({
+      name: "همکار تست یکپارچگی",
+      commissionRate: 10, // 10%
+      city: "تست"
+    });
+    collaboratorId = collaborator.id;
+    expect(collaborator.id).toBeTruthy();
+    expect(collaborator.commissionRate).toBe(10);
+
+    const representative = await createRepresentative({
+      representativeCode: "REP-TEST-INTEG",
+      persianFullName: "نماینده تست یکپارچگی",
+      salesCollaboratorId: collaborator.id
+    });
+    representativeId = representative.id;
+    expect(representative.id).toBeTruthy();
+    expect(representative.salesCollaboratorId).toBe(collaborator.id);
+
+    // 2. Invoice Generation
+    const marzbanJson = [{
+      type: "table",
+      name: "a",
+      data: [{
+        admin_username: "REP-TEST-INTEG",
+        limited_1_month_volume: "0",
+        limited_2_month_volume: "0",
+        limited_3_month_volume: "0",
+        limited_4_month_volume: "0",
+        limited_5_month_volume: "0",
+        limited_6_month_volume: "0",
+        unlimited_1_month: "1", // TIER 7
+        unlimited_2_month: "0",
+        unlimited_3_month: "0",
+        unlimited_4_month: "0",
+        unlimited_5_month: "0",
+        unlimited_6_month: "0"
+      }]
+    }];
+
+    const processingResult = await processMarzbanJsonFile({
+      fileContent: JSON.stringify(marzbanJson),
+      fileName: "test.json"
+    });
+    
+    expect(processingResult.success).toBe(true);
+    expect(processingResult.invoices.length).toBe(1);
+    invoiceId = processingResult.invoices[0].id;
+    
+    // 3. Verification
+    const invoice = await getInvoice({ id: invoiceId });
+    const updatedRep = await getRepresentativeProfile({ id: representativeId });
+    const allCommissionRecords = await listCommissionRecords();
+    const commissionRecord = allCommissionRecords.find(cr => cr.invoiceId === invoiceId);
+    const updatedCollab = await getSalesCollaboratorProfile({ id: collaboratorId });
+
+    // Price for tier 7 is 50000. 9% tax = 4500. Total = 54500.
+    const expectedTotalAmount = 54500; 
+    expect(invoice?.totalAmount).toBeCloseTo(expectedTotalAmount, -2); // Using toBeCloseTo for float precision
+    expect(updatedRep?.balance).toBeCloseTo(-expectedTotalAmount, -2);
+    
+    const expectedCommission = expectedTotalAmount * 0.10; // 10%
+    expect(commissionRecord?.commissionAmount).toBeCloseTo(expectedCommission, -2);
+    expect(updatedCollab?.balance).toBeCloseTo(expectedCommission, -2);
+
+    // 4. Payout
+    const payout = await createCommissionPayout({
+      salesCollaboratorId: collaboratorId,
+      amount: commissionRecord!.commissionAmount
+    });
+    expect(payout.id).toBeTruthy();
+    expect(payout.amount).toBeCloseTo(expectedCommission, -2);
+
+    // 5. Final Verification
+    const finalCollab = await getSalesCollaboratorProfile({ id: collaboratorId });
+    expect(finalCollab?.balance).toBeCloseTo(0, -2);
+
+  } finally {
+    // Cleanup in reverse order of creation
+    if (representativeId) {
+        await deleteRepresentative({ id: representativeId });
+    }
+    if (collaboratorId) {
+        await deleteCollaborator({ id: collaboratorId });
+    }
+  }
+}
+
+// Legacy test for backward compatibility
+async function testSeedInitialData() {
+  const result = await _seedInitialData();
+
+  expect(result).toHaveProperty("message");
+  expect(result.collaboratorsCreated).toBeGreaterThan(0);
+  expect(result.representativesCreated).toBeGreaterThan(0);
+  expect(result.invoicesCreated).toBeGreaterThan(0);
+  expect(result.configsCreated).toBeGreaterThan(0);
+}
+
+type TestResult = {
+  passedTests: string[];
+  failedTests: { name: string; error: string }[];
+};
+
+export async function _runApiTests() {
+  const result: TestResult = { passedTests: [], failedTests: [] };
+
+  const testFunctions = [
+    testMarzbanJsonAdapterTransform,
+    testInvoiceGenerationServiceIntegration,
+    testSeedInitialData,
+    testFullFinancialCycle
+  ];
+
+  const finalResult = await testFunctions.reduce(
+    async (promisedAcc, testFunction) => {
+      const acc = await promisedAcc;
+      try {
+        await testFunction();
+        return {
+          ...acc,
+          passedTests: [...acc.passedTests, testFunction.name],
+        };
+      } catch (error) {
+        return {
+          ...acc,
+          failedTests: [
+            ...acc.failedTests,
+            {
+              name: testFunction.name,
+              error: error instanceof Error ? error.message : "Unknown error",
+            },
+          ],
+        };
+      }
+    },
+    Promise.resolve(result),
+  );
+
+  return finalResult;
+}

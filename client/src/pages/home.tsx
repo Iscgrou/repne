@@ -1,245 +1,318 @@
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
 import { 
-  DollarSign, 
-  AlertTriangle, 
+  TrendingUp, 
+  FileText, 
   Users, 
-  HandHeart,
+  DollarSign, 
+  Calendar,
   Upload,
-  UserPlus,
-  CreditCard,
-  BarChart3,
-  Eye,
-  Edit,
-  Download
+  Bell,
+  Settings,
+  LogOut,
+  Flame
 } from "lucide-react";
 import StatCard from "@/components/stat-card";
-import PageHeader from "@/components/page-header";
-import { Badge } from "@/components/ui/badge";
-import { useState } from "react";
-import UploadJsonModal from "@/components/upload-json-modal";
-import { isUnauthorizedError } from "@/lib/authUtils";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Home() {
+  const { user } = useAuth();
   const { toast } = useToast();
-  const [showUploadModal, setShowUploadModal] = useState(false);
 
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["/api/dashboard/stats"],
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "غیر مجاز",
-          description: "در حال انتقال به صفحه ورود...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-    },
   });
 
-  if (isLoading) {
+  const { data: recentInvoices, isLoading: invoicesLoading } = useQuery({
+    queryKey: ["/api/invoices"],
+  });
+
+  const { data: representatives, isLoading: repsLoading } = useQuery({
+    queryKey: ["/api/representatives"],
+  });
+
+  if (statsLoading || invoicesLoading || repsLoading) {
     return (
-      <div className="space-y-6 animate-pulse">
-        <div className="h-8 bg-muted rounded"></div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-32 bg-muted rounded-xl"></div>
-          ))}
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-6 py-8">
+          <div className="animate-pulse space-y-8">
+            <div className="h-8 bg-muted rounded w-1/3"></div>
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="h-32 bg-muted rounded-lg"></div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('fa-IR').format(amount) + ' تومان';
-  };
-
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="داشبورد"
-        description="مرور کلی سیستم فاکتور فنیکس"
-      />
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="border-b border-border/40 bg-card/50 backdrop-blur supports-[backdrop-filter]:bg-card/30">
+        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="phoenix-gradient p-2 rounded-xl">
+              <Flame className="h-8 w-8 text-obsidian" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold phoenix-gradient-text">Phoenix</h1>
+              <p className="text-sm text-muted-foreground">پنل مدیریت</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <img 
+                src={user?.profileImageUrl || '/api/placeholder-avatar'} 
+                alt={user?.firstName || 'کاربر'}
+                className="w-8 h-8 rounded-full object-cover"
+              />
+              <span className="text-sm font-medium">
+                {user?.firstName} {user?.lastName}
+              </span>
+              {user?.isAdmin && (
+                <Badge variant="secondary" className="bg-gold/20 text-gold border-gold/30">
+                  مدیر سیستم
+                </Badge>
+              )}
+            </div>
+            
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => window.location.href = '/api/logout'}
+            >
+              <LogOut className="h-4 w-4" />
+              خروج
+            </Button>
+          </div>
+        </div>
+      </header>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard
-          title="کل درآمد ماه"
-          value={formatCurrency(stats?.monthlyRevenue || 0)}
-          icon={<DollarSign className="h-4 w-4" />}
-          description="درآمد ماه جاری"
-          trend={{
-            value: 15.2,
-            isPositive: true
-          }}
-        />
-        
-        <StatCard
-          title="فاکتورهای معوق"
-          value={stats?.overdueInvoices || 0}
-          icon={<AlertTriangle className="h-4 w-4" />}
-          description="نیاز به پیگیری"
-          trend={{
-            value: 8.5,
-            isPositive: false
-          }}
-        />
-        
-        <StatCard
-          title="نمایندگان فعال"
-          value={stats?.activeRepresentatives || 0}
-          icon={<Users className="h-4 w-4" />}
-          description="در سراسر کشور"
-          trend={{
-            value: 2.1,
-            isPositive: true
-          }}
-        />
-        
-        <StatCard
-          title="پورسانت‌های پرداختی"
-          value={formatCurrency(stats?.paidCommissions || 0)}
-          icon={<HandHeart className="h-4 w-4" />}
-          description="این ماه"
-          trend={{
-            value: 12.3,
-            isPositive: true
-          }}
-        />
-      </div>
+      <div className="container mx-auto px-6 py-8 space-y-8">
+        {/* Welcome Section */}
+        <div className="space-y-2">
+          <h2 className="text-3xl font-bold">
+            خوش آمدید، {user?.firstName}!
+          </h2>
+          <p className="text-muted-foreground">
+            مدیریت فاکتورها و نمایندگان خود را از اینجا آغاز کنید
+          </p>
+        </div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Recent Invoices */}
-        <div className="lg:col-span-2">
-          <Card className="obsidian-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-lg font-semibold">آخرین فاکتورها</CardTitle>
-              <Button variant="ghost" size="sm" className="text-gold hover:text-gold-light">
-                مشاهده همه
-                <Eye className="mr-2 h-4 w-4 rtl-flip" />
+        {/* Stats Grid */}
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard
+            title="درآمد ماهانه"
+            value={`${(stats?.monthlyRevenue || 0).toLocaleString('fa-IR')} تومان`}
+            icon={<TrendingUp className="h-5 w-5" />}
+            description="درآمد ماه جاری"
+            trend={{
+              value: 12.5,
+              isPositive: true
+            }}
+            className="obsidian-card"
+          />
+          
+          <StatCard
+            title="فاکتورهای معوقه"
+            value={stats?.overdueInvoices || 0}
+            icon={<FileText className="h-5 w-5" />}
+            description="نیاز به پیگیری"
+            trend={{
+              value: 3.2,
+              isPositive: false
+            }}
+            className="obsidian-card"
+          />
+          
+          <StatCard
+            title="نمایندگان فعال"
+            value={stats?.activeRepresentatives || 0}
+            icon={<Users className="h-5 w-5" />}
+            description="نمایندگان در حال فعالیت"
+            className="obsidian-card"
+          />
+          
+          <StatCard
+            title="کمیسیون پرداختی"
+            value={`${(stats?.paidCommissions || 0).toLocaleString('fa-IR')} تومان`}
+            icon={<DollarSign className="h-5 w-5" />}
+            description="کمیسیون ماه جاری"
+            className="obsidian-card"
+          />
+        </div>
+
+        {/* Quick Actions */}
+        <Card className="obsidian-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Upload className="h-5 w-5 text-gold" />
+              اقدامات سریع
+            </CardTitle>
+            <CardDescription>
+              دسترسی سریع به عملیات مهم سیستم
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <Button 
+                className="h-20 flex-col gap-2 phoenix-gradient hover:bg-gold-light text-obsidian"
+                onClick={() => window.location.href = '/invoices'}
+              >
+                <FileText className="h-6 w-6" />
+                آپلود JSON
               </Button>
+              
+              <Button 
+                variant="outline" 
+                className="h-20 flex-col gap-2 border-gold text-gold hover:bg-gold hover:text-obsidian"
+                onClick={() => window.location.href = '/representatives'}
+              >
+                <Users className="h-6 w-6" />
+                مدیریت نمایندگان
+              </Button>
+              
+              <Button 
+                variant="outline" 
+                className="h-20 flex-col gap-2 border-gold text-gold hover:bg-gold hover:text-obsidian"
+                onClick={() => window.location.href = '/invoices'}
+              >
+                <FileText className="h-6 w-6" />
+                فاکتورها
+              </Button>
+              
+              {user?.isAdmin && (
+                <Button 
+                  variant="outline" 
+                  className="h-20 flex-col gap-2 border-gold text-gold hover:bg-gold hover:text-obsidian"
+                  onClick={() => window.location.href = '/admin'}
+                >
+                  <Settings className="h-6 w-6" />
+                  پنل مدیریت
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Recent Activity */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Recent Invoices */}
+          <Card className="obsidian-card">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-gold" />
+                آخرین فاکتورها
+              </CardTitle>
+              <CardDescription>
+                فاکتورهای اخیر سیستم
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">شماره فاکتور</th>
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">نماینده</th>
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">مبلغ</th>
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">وضعیت</th>
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">تاریخ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stats?.recentInvoices?.map((invoice) => (
-                      <tr key={invoice.id} className="border-b border-border hover:bg-muted/50 transition-colors">
-                        <td className="py-4 px-4">
-                          <span className="font-medium text-gold">{invoice.invoiceNumber}</span>
-                        </td>
-                        <td className="py-4 px-4">نماینده #{invoice.representativeId.slice(-6)}</td>
-                        <td className="py-4 px-4 font-semibold">{formatCurrency(invoice.totalAmount)}</td>
-                        <td className="py-4 px-4">
-                          <Badge className={`invoice-status-${invoice.status.toLowerCase()}`}>
-                            {invoice.status === 'PAID' ? 'پرداخت شده' : 
-                             invoice.status === 'PENDING_PAYMENT' ? 'در انتظار' : 
-                             invoice.status === 'OVERDUE' ? 'معوق' : 'پیش‌نویس'}
-                          </Badge>
-                        </td>
-                        <td className="py-4 px-4 text-muted-foreground text-sm">
-                          {new Date(invoice.createdAt || '').toLocaleDateString('fa-IR')}
-                        </td>
-                      </tr>
-                    )) || (
-                      <tr>
-                        <td colSpan={5} className="py-8 text-center text-muted-foreground">
-                          هنوز فاکتوری ایجاد نشده است
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+              <div className="space-y-4">
+                {recentInvoices?.slice(0, 5).map((invoice: any) => (
+                  <div key={invoice.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                    <div className="space-y-1">
+                      <div className="font-medium">{invoice.invoiceNumber}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {new Date(invoice.issueDate).toLocaleDateString('fa-IR')}
+                      </div>
+                    </div>
+                    <div className="text-left space-y-1">
+                      <div className="font-medium">
+                        {invoice.totalAmount.toLocaleString('fa-IR')} تومان
+                      </div>
+                      <Badge 
+                        variant="outline" 
+                        className={`
+                          ${invoice.status === 'PAID' ? 'status-success' : ''}
+                          ${invoice.status === 'PENDING' ? 'status-warning' : ''}
+                          ${invoice.status === 'OVERDUE' ? 'status-error' : ''}
+                          ${invoice.status === 'DRAFT' ? 'status-info' : ''}
+                        `}
+                      >
+                        {invoice.status === 'PAID' ? 'پرداخت شده' : 
+                         invoice.status === 'PENDING' ? 'در انتظار' :
+                         invoice.status === 'OVERDUE' ? 'معوقه' : 'پیش‌نویس'}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+                
+                {(!recentInvoices || recentInvoices.length === 0) && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    هنوز فاکتوری ثبت نشده است
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Active Representatives */}
+          <Card className="obsidian-card">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-gold" />
+                نمایندگان فعال
+              </CardTitle>
+              <CardDescription>
+                نمایندگان با بیشترین فعالیت
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {representatives?.filter((rep: any) => rep.isActive).slice(0, 5).map((rep: any) => (
+                  <div key={rep.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                    <div className="space-y-1">
+                      <div className="font-medium">{rep.persianFullName}</div>
+                      <div className="text-sm text-muted-foreground">
+                        کد: {rep.representativeCode}
+                      </div>
+                    </div>
+                    <div className="text-left space-y-1">
+                      <div className="font-medium">
+                        {rep.balance.toLocaleString('fa-IR')} تومان
+                      </div>
+                      <Badge variant="outline" className="status-success">
+                        فعال
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+                
+                {(!representatives || representatives.filter((rep: any) => rep.isActive).length === 0) && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    هنوز نماینده فعالی ثبت نشده است
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
         </div>
-        
-        {/* Quick Actions */}
-        <div>
-          <Card className="obsidian-card">
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold">اقدامات سریع</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button 
-                onClick={() => setShowUploadModal(true)}
-                className="w-full justify-start gap-4 h-auto p-4 bg-gold/20 hover:bg-gold/30 text-gold border-gold/30"
-                variant="outline"
-              >
-                <div className="p-2 rounded-lg bg-gold/20">
-                  <Upload className="h-5 w-5" />
-                </div>
-                <div className="flex-1 text-right">
-                  <p className="font-medium">آپلود فایل JSON</p>
-                  <p className="text-sm text-muted-foreground">پردازش فاکتورهای جدید</p>
-                </div>
-              </Button>
-              
-              <Button 
-                className="w-full justify-start gap-4 h-auto p-4"
-                variant="outline"
-              >
-                <div className="p-2 rounded-lg bg-blue-500/20">
-                  <UserPlus className="h-5 w-5 text-blue-400" />
-                </div>
-                <div className="flex-1 text-right">
-                  <p className="font-medium">نماینده جدید</p>
-                  <p className="text-sm text-muted-foreground">افزودن نماینده</p>
-                </div>
-              </Button>
-              
-              <Button 
-                className="w-full justify-start gap-4 h-auto p-4"
-                variant="outline"
-              >
-                <div className="p-2 rounded-lg bg-green-500/20">
-                  <CreditCard className="h-5 w-5 text-green-400" />
-                </div>
-                <div className="flex-1 text-right">
-                  <p className="font-medium">ثبت پرداخت</p>
-                  <p className="text-sm text-muted-foreground">پرداخت جدید</p>
-                </div>
-              </Button>
-              
-              <Button 
-                className="w-full justify-start gap-4 h-auto p-4"
-                variant="outline"
-              >
-                <div className="p-2 rounded-lg bg-purple-500/20">
-                  <BarChart3 className="h-5 w-5 text-purple-400" />
-                </div>
-                <div className="flex-1 text-right">
-                  <p className="font-medium">گزارش مالی</p>
-                  <p className="text-sm text-muted-foreground">تولید گزارش</p>
-                </div>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
 
-      <UploadJsonModal 
-        open={showUploadModal} 
-        onClose={() => setShowUploadModal(false)} 
-      />
+        {/* System Status */}
+        <Card className="obsidian-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Bell className="h-5 w-5 text-gold" />
+              وضعیت سیستم
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-sm">سیستم Phoenix آنلاین و آماده خدمات‌رسانی است</span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

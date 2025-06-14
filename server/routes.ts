@@ -253,23 +253,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // JSON File Processing
   app.post("/api/process-marzban-json", isAuthenticated, async (req, res) => {
     try {
-      const { fileContent, fileName, autoCreateRepresentatives = true, applySmartPricing = true } = req.body;
+      const { jsonData, skipInactive = true, applySmartPricing = true } = req.body;
       
-      if (!fileContent || !fileName) {
-        return res.status(400).json({ message: "File content and name are required" });
+      if (!jsonData || !Array.isArray(jsonData)) {
+        return res.status(400).json({ message: "Valid JSON data array is required" });
       }
 
       const result = await apiServices.processMarzbanJsonFile({
-        fileContent,
-        fileName,
-        autoCreateRepresentatives,
+        jsonData,
+        skipInactive,
         applySmartPricing,
       });
 
       res.json(result);
     } catch (error) {
       console.error("Error processing Marzban JSON:", error);
-      res.status(500).json({ message: "Failed to process JSON file" });
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to process JSON file" 
+      });
     }
   });
 

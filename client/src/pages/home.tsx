@@ -69,14 +69,14 @@ export default function Home() {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <img 
-                src={user?.profileImageUrl || '/api/placeholder-avatar'} 
-                alt={user?.firstName || 'کاربر'}
+                src={(user && user.profileImageUrl) || '/api/placeholder-avatar'} 
+                alt={(user && user.firstName) || 'کاربر'}
                 className="w-8 h-8 rounded-full object-cover"
               />
               <span className="text-sm font-medium">
-                {user?.firstName} {user?.lastName}
+                {(user && user.firstName) || 'کاربر'} {(user && user.lastName) || ''}
               </span>
-              {user?.isAdmin && (
+              {(user && user.isAdmin) && (
                 <Badge variant="secondary" className="bg-gold/20 text-gold border-gold/30">
                   مدیر سیستم
                 </Badge>
@@ -99,7 +99,7 @@ export default function Home() {
         {/* Welcome Section */}
         <div className="space-y-2">
           <h2 className="text-3xl font-bold">
-            خوش آمدید، {user?.firstName}!
+            خوش آمدید، {(user && user.firstName) || 'کاربر'}!
           </h2>
           <p className="text-muted-foreground">
             مدیریت فاکتورها و نمایندگان خود را از اینجا آغاز کنید
@@ -110,7 +110,7 @@ export default function Home() {
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatCard
             title="درآمد ماهانه"
-            value={`${(stats?.monthlyRevenue || 0).toLocaleString('fa-IR')} تومان`}
+            value={`${((stats && stats.monthlyRevenue) || 0).toLocaleString('fa-IR')} تومان`}
             icon={<TrendingUp className="h-5 w-5" />}
             description="درآمد ماه جاری"
             trend={{
@@ -122,7 +122,7 @@ export default function Home() {
           
           <StatCard
             title="فاکتورهای معوقه"
-            value={stats?.overdueInvoices || 0}
+            value={(stats && stats.overdueInvoices) || 0}
             icon={<FileText className="h-5 w-5" />}
             description="نیاز به پیگیری"
             trend={{
@@ -134,7 +134,7 @@ export default function Home() {
           
           <StatCard
             title="نمایندگان فعال"
-            value={stats?.activeRepresentatives || 0}
+            value={(stats && stats.activeRepresentatives) || 0}
             icon={<Users className="h-5 w-5" />}
             description="نمایندگان در حال فعالیت"
             className="obsidian-card"
@@ -142,7 +142,7 @@ export default function Home() {
           
           <StatCard
             title="کمیسیون پرداختی"
-            value={`${(stats?.paidCommissions || 0).toLocaleString('fa-IR')} تومان`}
+            value={`${((stats && stats.paidCommissions) || 0).toLocaleString('fa-IR')} تومان`}
             icon={<DollarSign className="h-5 w-5" />}
             description="کمیسیون ماه جاری"
             className="obsidian-card"
@@ -188,7 +188,7 @@ export default function Home() {
                 فاکتورها
               </Button>
               
-              {user?.isAdmin && (
+              {(user && user.isAdmin) && (
                 <Button 
                   variant="outline" 
                   className="h-20 flex-col gap-2 border-gold text-gold hover:bg-gold hover:text-obsidian"
@@ -217,7 +217,7 @@ export default function Home() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {recentInvoices?.slice(0, 5).map((invoice: any) => (
+                {(recentInvoices && Array.isArray(recentInvoices) ? recentInvoices.slice(0, 5) : []).map((invoice: any) => (
                   <div key={invoice.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
                     <div className="space-y-1">
                       <div className="font-medium">{invoice.invoiceNumber}</div>
